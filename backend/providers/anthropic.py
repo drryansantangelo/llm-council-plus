@@ -14,6 +14,33 @@ class AnthropicProvider(LLMProvider):
         settings = get_settings()
         return settings.anthropic_api_key or ""
 
+    def _convert_content_for_anthropic(self, content):
+        """Convert OpenAI-format multimodal content to Anthropic format."""
+        if isinstance(content, str):
+            return content
+
+        if not isinstance(content, list):
+            return str(content)
+
+        converted = []
+        for block in content:
+            if block.get("type") == "text":
+                converted.append({"type": "text", "text": block["text"]})
+            elif block.get("type") == "image_url":
+                data_url = block["image_url"]["url"]
+                if data_url.startswith("data:"):
+                    header, b64data = data_url.split(",", 1)
+                    media_type = header.split(":")[1].split(";")[0]
+                    converted.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": b64data,
+                        },
+                    })
+        return converted if converted else content
+
     async def query(self, model_id: str, messages: List[Dict[str, str]], timeout: float = 120.0, temperature: float = 0.7) -> Dict[str, Any]:
         api_key = self._get_api_key()
         if not api_key:
@@ -21,14 +48,15 @@ class AnthropicProvider(LLMProvider):
             
         model = model_id.removeprefix("anthropic:")
         
-        # Convert messages to Anthropic format (system message is separate)
         system_message = ""
         filtered_messages = []
         for msg in messages:
             if msg["role"] == "system":
-                system_message = msg["content"]
+                system_message = msg["content"] if isinstance(msg["content"], str) else str(msg["content"])
             else:
-                filtered_messages.append(msg)
+                converted_msg = dict(msg)
+                converted_msg["content"] = self._convert_content_for_anthropic(msg["content"])
+                filtered_messages.append(converted_msg)
         
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:

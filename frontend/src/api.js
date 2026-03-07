@@ -354,4 +354,187 @@ export const api = {
       reader.releaseLock();
     }
   },
+
+  /**
+   * Upload a file to a conversation.
+   * @param {string} conversationId
+   * @param {File} file
+   * @returns {Promise<Object>} File metadata (id, filename, original_name, type, mime_type, size)
+   */
+  async uploadFile(conversationId, file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await fetch(
+      `${API_BASE}/api/conversations/${conversationId}/upload`,
+      {
+        method: 'POST',
+        body: formData,
+      }
+    );
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to upload file');
+    }
+    return response.json();
+  },
+
+  /**
+   * Get the URL for a previously uploaded file.
+   */
+  getFileUrl(conversationId, filename) {
+    return `${API_BASE}/api/files/${conversationId}/${filename}`;
+  },
+
+  /**
+   * Start a debate and receive streaming updates.
+   */
+  async sendDebateStream(conversationId, options, onEvent, signal) {
+    const { content, webSearch = false, fileIds = [] } = options;
+    const response = await fetch(
+      `${API_BASE}/api/conversations/${conversationId}/debate/stream?_t=${Date.now()}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache',
+        },
+        body: JSON.stringify({
+          content,
+          web_search: webSearch,
+          file_ids: fileIds.length > 0 ? fileIds : undefined,
+        }),
+        signal,
+        cache: 'no-store',
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error('Failed to start debate');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            try {
+              const event = JSON.parse(data);
+              onEvent(event.type, event);
+            } catch (e) {
+              console.error('Failed to parse SSE event:', e);
+            }
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  },
+
+  /**
+   * Send an interjection to an active debate.
+   */
+  async sendInterjection(conversationId, content) {
+    const response = await fetch(
+      `${API_BASE}/api/conversations/${conversationId}/interject`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error('Failed to send interjection');
+    }
+    return response.json();
+  },
+
+  // ── Campaign API ─────────────────────────────────────────────────────
+
+  async createCampaign(name) {
+    const response = await fetch(`${API_BASE}/api/campaigns`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!response.ok) throw new Error('Failed to create campaign');
+    return response.json();
+  },
+
+  async listCampaigns() {
+    const response = await fetch(`${API_BASE}/api/campaigns`);
+    if (!response.ok) throw new Error('Failed to list campaigns');
+    return response.json();
+  },
+
+  async getCampaign(campaignId) {
+    const response = await fetch(`${API_BASE}/api/campaigns/${campaignId}`);
+    if (!response.ok) throw new Error('Failed to get campaign');
+    return response.json();
+  },
+
+  async updateCampaign(campaignId, updates) {
+    const response = await fetch(`${API_BASE}/api/campaigns/${campaignId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    if (!response.ok) throw new Error('Failed to update campaign');
+    return response.json();
+  },
+
+  async deleteCampaign(campaignId) {
+    const response = await fetch(`${API_BASE}/api/campaigns/${campaignId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) throw new Error('Failed to delete campaign');
+    return response.json();
+  },
+
+  async addStage(campaignId, name) {
+    const response = await fetch(`${API_BASE}/api/campaigns/${campaignId}/stages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!response.ok) throw new Error('Failed to add stage');
+    return response.json();
+  },
+
+  async reorderStages(campaignId, stageIds) {
+    const response = await fetch(`${API_BASE}/api/campaigns/${campaignId}/stages/reorder`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stage_ids: stageIds }),
+    });
+    if (!response.ok) throw new Error('Failed to reorder stages');
+    return response.json();
+  },
+
+  async updateStage(campaignId, stageId, updates) {
+    const response = await fetch(`${API_BASE}/api/campaigns/${campaignId}/stages/${stageId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    if (!response.ok) throw new Error('Failed to update stage');
+    return response.json();
+  },
+
+  async deleteStage(campaignId, stageId) {
+    const response = await fetch(`${API_BASE}/api/campaigns/${campaignId}/stages/${stageId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) throw new Error('Failed to delete stage');
+    return response.json();
+  },
 };

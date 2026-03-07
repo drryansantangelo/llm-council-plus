@@ -35,9 +35,30 @@ async def query_model(
         
     api_url = f"{base_url}/api/chat"
 
+    converted_messages = []
+    for msg in messages:
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            text_parts = []
+            images = []
+            for block in content:
+                if block.get("type") == "text":
+                    text_parts.append(block["text"])
+                elif block.get("type") == "image_url":
+                    data_url = block["image_url"]["url"]
+                    if data_url.startswith("data:"):
+                        b64data = data_url.split(",", 1)[1]
+                        images.append(b64data)
+            converted = {"role": msg["role"], "content": "\n".join(text_parts)}
+            if images:
+                converted["images"] = images
+            converted_messages.append(converted)
+        else:
+            converted_messages.append(msg)
+
     payload = {
         "model": model,
-        "messages": messages,
+        "messages": converted_messages,
         "stream": False,
         "options": {
             "temperature": temperature

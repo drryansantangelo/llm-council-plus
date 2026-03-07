@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import ChatInterface from './components/ChatInterface';
 import Settings from './components/Settings';
+import CampaignBar from './components/CampaignBar';
+import StageManager from './components/StageManager';
 import { api } from './api';
 import './App.css';
 import './components/StageCopyButtons.css';
@@ -11,6 +13,7 @@ function App() {
   const [currentConversationId, setCurrentConversationId] = useState(null);
   const [currentConversation, setCurrentConversation] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isDebateActive, setIsDebateActive] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState('llm_keys');
   const [ollamaStatus, setOllamaStatus] = useState({
@@ -18,28 +21,26 @@ function App() {
     lastConnected: null,
     testing: false
   });
-  const [councilConfigured, setCouncilConfigured] = useState(true); // Assume configured until checked
-  const [councilModels, setCouncilModels] = useState([]);
+  const [debateConfigured, setDebateConfigured] = useState(true);
+  const [debateModels, setDebateModels] = useState([]);
   const [chairmanModel, setChairmanModel] = useState(null);
   const [searchProvider, setSearchProvider] = useState('duckduckgo');
-  const [executionMode, setExecutionMode] = useState('full');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const abortControllerRef = useRef(null);
   const requestIdRef = useRef(0);
-  const isInitialMount = useRef(true);
 
-  // Check initial configuration on mount
+  const [campaigns, setCampaigns] = useState([]);
+  const [currentCampaignId, setCurrentCampaignId] = useState(null);
+  const [currentStageId, setCurrentStageId] = useState(null);
+  const [managingCampaignId, setManagingCampaignId] = useState(null);
+
   useEffect(() => {
     checkInitialSetup();
   }, []);
 
   const checkInitialSetup = async () => {
     try {
-      // 1. Get Settings to check for API keys
       const settings = await api.getSettings();
-
-      // Load execution mode preference
-      setExecutionMode(settings.execution_mode || 'full');
       setSearchProvider(settings.search_provider || 'duckduckgo');
 
       const hasApiKey = settings.openrouter_api_key_set ||
@@ -50,8 +51,6 @@ function App() {
         settings.mistral_api_key_set ||
         settings.deepseek_api_key_set;
 
-      // 2. Test Ollama Connection
-      // We do this regardless to update the status indicator
       const ollamaUrl = settings.ollama_base_url || 'http://localhost:11434';
       setOllamaStatus(prev => ({ ...prev, testing: true }));
 
@@ -59,125 +58,80 @@ function App() {
       try {
         const result = await api.testOllamaConnection(ollamaUrl);
         isOllamaConnected = result.success;
-
-        if (result.success) {
-          setOllamaStatus({
-            connected: true,
-            lastConnected: new Date().toLocaleString(),
-            testing: false
-          });
-        } else {
-          setOllamaStatus({ connected: false, lastConnected: null, testing: false });
-        }
-      } catch (err) {
-        console.error('Ollama initial test failed:', err);
+        setOllamaStatus({
+          connected: result.success,
+          lastConnected: result.success ? new Date().toLocaleString() : null,
+          testing: false
+        });
+      } catch {
         setOllamaStatus({ connected: false, lastConnected: null, testing: false });
       }
 
-      // 3. Check if council is configured (has models selected)
-      const models = settings.council_models || [];
+      const models = settings.debate_models || [];
       const chairman = settings.chairman_model || '';
-
-      setCouncilModels(models);
+      setDebateModels(models);
       setChairmanModel(chairman);
 
-      const hasCouncilMembers = models.some(m => m && m.trim() !== '');
-      const hasChairman = chairman && chairman.trim() !== '';
-      setCouncilConfigured(hasCouncilMembers && hasChairman);
+      const hasDebaters = models.some(m => m && m.trim() !== '');
+      setDebateConfigured(hasDebaters);
 
-      // 4. If no providers are configured, open settings
       if (!hasApiKey && !isOllamaConnected) {
         setShowSettings(true);
       }
-
     } catch (error) {
       console.error('Failed to check initial setup:', error);
     }
   };
 
-  // Re-check council configuration when settings close
   const handleSettingsClose = async () => {
     setShowSettings(false);
     try {
       const settings = await api.getSettings();
-      const models = settings.council_models || [];
+      const models = settings.debate_models || [];
       const chairman = settings.chairman_model || '';
-
-      setCouncilModels(models);
+      setDebateModels(models);
       setChairmanModel(chairman);
       setSearchProvider(settings.search_provider || 'duckduckgo');
-
-      const hasCouncilMembers = models.some(m => m && m.trim() !== '');
-      const hasChairman = chairman && chairman.trim() !== '';
-      setCouncilConfigured(hasCouncilMembers && hasChairman);
+      const hasDebaters = models.some(m => m && m.trim() !== '');
+      setDebateConfigured(hasDebaters);
     } catch (error) {
       console.error('Error after closing settings:', error);
     }
   };
 
-  const handleOpenSettings = (section = 'council') => {
-    setSettingsInitialSection(section || 'council');
+  const handleOpenSettings = (section = 'debate') => {
+    setSettingsInitialSection(section || 'debate');
     setShowSettings(true);
   };
 
-  // Load conversations on mount
   useEffect(() => {
     loadConversations();
+    loadCampaigns();
   }, []);
-
-  // Auto-save execution mode preference when changed
-  useEffect(() => {
-    // Skip saving on initial mount
-    if (isInitialMount.current) {
-      isInitialMount.current = false;
-      return;
-    }
-
-    const saveExecutionMode = async () => {
-      try {
-        await api.updateSettings({ execution_mode: executionMode });
-      } catch (error) {
-        console.error('Failed to save execution mode:', error);
-      }
-    };
-
-    saveExecutionMode();
-  }, [executionMode]);
 
   const testOllamaConnection = async (customUrl = null) => {
     try {
       setOllamaStatus(prev => ({ ...prev, testing: true }));
-
-      // Use custom URL if provided, otherwise get from settings
       let urlToTest = customUrl;
       if (!urlToTest) {
         const settings = await api.getSettings();
         urlToTest = settings.ollama_base_url;
       }
-
       if (!urlToTest) {
         setOllamaStatus({ connected: false, lastConnected: null, testing: false });
         return;
       }
-
       const result = await api.testOllamaConnection(urlToTest);
-
-      if (result.success) {
-        setOllamaStatus({
-          connected: true,
-          lastConnected: new Date().toLocaleString(),
-          testing: false
-        });
-      } else {
-        setOllamaStatus({ connected: false, lastConnected: null, testing: false });
-      }
-    } catch (error) {
-      console.error('Ollama connection test failed:', error);
+      setOllamaStatus({
+        connected: result.success,
+        lastConnected: result.success ? new Date().toLocaleString() : null,
+        testing: false
+      });
+    } catch {
       setOllamaStatus({ connected: false, lastConnected: null, testing: false });
     }
   };
 
-  // Load conversation details when selected
   useEffect(() => {
     if (currentConversationId) {
       loadConversation(currentConversationId);
@@ -190,7 +144,6 @@ function App() {
       setConversations(convs);
     } catch (error) {
       console.error('Failed to load conversations:', error);
-      // Retry up to 3 times with increasing delays (1s, 2s, 3s)
       if (retryCount < 3) {
         setTimeout(() => loadConversations(retryCount + 1), (retryCount + 1) * 1000);
       }
@@ -206,16 +159,23 @@ function App() {
     }
   };
 
-  const handleNewConversation = async () => {
-    // Check if there's already an empty/unused conversation
-    const existingEmpty = conversations.find(conv => !conv.title && conv.message_count === 0);
+  const loadCampaigns = async () => {
+    try {
+      const camps = await api.listCampaigns();
+      setCampaigns(camps);
+    } catch (error) {
+      console.error('Failed to load campaigns:', error);
+    }
+  };
 
+  const handleNewConversation = async () => {
+    setCurrentCampaignId(null);
+    setCurrentStageId(null);
+    const existingEmpty = conversations.find(conv => !conv.title && conv.message_count === 0);
     if (existingEmpty) {
-      // Reuse the existing empty conversation instead of creating a new one
       setCurrentConversationId(existingEmpty.id);
       return;
     }
-
     try {
       const newConv = await api.createConversation();
       setConversations([
@@ -229,15 +189,15 @@ function App() {
   };
 
   const handleSelectConversation = (id) => {
+    setCurrentCampaignId(null);
+    setCurrentStageId(null);
     setCurrentConversationId(id);
   };
 
   const handleDeleteConversation = async (id) => {
     try {
       await api.deleteConversation(id);
-      // Remove from local state
       setConversations(conversations.filter(c => c.id !== id));
-      // If we deleted the current conversation, clear it
       if (id === currentConversationId) {
         setCurrentConversationId(null);
         setCurrentConversation(null);
@@ -250,83 +210,133 @@ function App() {
   const handleAbort = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
-      // Don't set to null here - let the request handler clean up
-      // This prevents race conditions with rapid clicks
       setIsLoading(false);
+      setIsDebateActive(false);
     }
   };
 
-  const handleSendMessage = async (content, webSearch) => {
+  const handleInterject = async (content) => {
+    if (!currentConversationId) return;
+    try {
+      await api.sendInterjection(currentConversationId, content);
+    } catch (error) {
+      console.error('Failed to send interjection:', error);
+    }
+  };
+
+  // ── Campaign handlers ───────────────────────────────────────────────
+
+  const handleNewCampaign = async (name) => {
+    try {
+      const campaign = await api.createCampaign(name);
+      setCampaigns(prev => [campaign, ...prev]);
+    } catch (error) {
+      console.error('Failed to create campaign:', error);
+    }
+  };
+
+  const handleDeleteCampaign = async (campaignId) => {
+    try {
+      await api.deleteCampaign(campaignId);
+      setCampaigns(prev => prev.filter(c => c.id !== campaignId));
+      if (campaignId === currentCampaignId) {
+        setCurrentCampaignId(null);
+        setCurrentStageId(null);
+        setCurrentConversationId(null);
+        setCurrentConversation(null);
+      }
+      loadConversations();
+    } catch (error) {
+      console.error('Failed to delete campaign:', error);
+    }
+  };
+
+  const handleSelectStage = (campaignId, stage) => {
+    setCurrentCampaignId(campaignId);
+    setCurrentStageId(stage.id);
+    setCurrentConversationId(stage.conversation_id);
+    setSidebarOpen(false);
+  };
+
+  const handleManageCampaign = (campaignId) => {
+    setManagingCampaignId(campaignId);
+  };
+
+  const handleStageManagerClose = () => {
+    setManagingCampaignId(null);
+    loadCampaigns();
+  };
+
+  const currentCampaign = campaigns.find(c => c.id === currentCampaignId);
+  const currentStage = currentCampaign?.stages?.find(s => s.id === currentStageId);
+
+  const handleSendMessage = async (content, webSearch, files = null) => {
     if (!currentConversationId) return;
 
-    // Assign unique ID to this request to prevent race conditions
     const currentRequestId = ++requestIdRef.current;
-
-    // Create new AbortController for this request
     abortControllerRef.current = new AbortController();
 
     setIsLoading(true);
+    setIsDebateActive(true);
+
     try {
-      // Optimistically add user message to UI
-      const userMessage = { role: 'user', content };
+      let fileIds = [];
+      let uploadedMetas = [];
+      if (files && files.length > 0) {
+        for (const file of files) {
+          try {
+            const meta = await api.uploadFile(currentConversationId, file);
+            fileIds.push(meta.id);
+            uploadedMetas.push(meta);
+          } catch (err) {
+            console.error('File upload failed:', err);
+          }
+        }
+      }
+
+      const userMessage = {
+        role: 'user',
+        content,
+        files: uploadedMetas.length > 0 ? uploadedMetas : undefined,
+      };
       setCurrentConversation((prev) => ({
         ...prev,
         messages: [...prev.messages, userMessage],
       }));
 
-      // Create a partial assistant message that will be updated progressively
       const assistantMessage = {
         role: 'assistant',
-        stage1: null,
-        stage2: null,
-        stage3: null,
+        mode: 'debate',
+        debate_entries: [],
+        summary: null,
         metadata: null,
         loading: {
+          active: true,
           search: false,
-          stage1: false,
-          stage2: false,
-          stage3: false,
+          currentModel: null,
+          currentRole: null,
+          currentRound: null,
+          convergence: false,
+          summary: false,
         },
-        timers: {
-          stage1Start: null,
-          stage1End: null,
-          stage2Start: null,
-          stage2End: null,
-          stage3Start: null,
-          stage3End: null,
-        },
-        progress: {
-          stage1: { count: 0, total: 0, currentModel: null },
-          stage2: { count: 0, total: 0, currentModel: null }
-        }
       };
 
-      // Add the partial assistant message
       setCurrentConversation((prev) => ({
         ...prev,
         messages: [...prev.messages, assistantMessage],
       }));
 
-      // Send message with streaming
-      await api.sendMessageStream(
+      await api.sendDebateStream(
         currentConversationId,
-        { content, webSearch, executionMode },
+        { content, webSearch, fileIds },
         (eventType, event) => {
           switch (eventType) {
             case 'search_start':
               setCurrentConversation((prev) => {
                 const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-
-                const updatedLastMsg = {
-                  ...lastMsg,
-                  loading: {
-                    ...lastMsg.loading,
-                    search: true
-                  }
-                };
-
-                messages[messages.length - 1] = updatedLastMsg;
+                const last = { ...messages[messages.length - 1] };
+                last.loading = { ...last.loading, search: true };
+                messages[messages.length - 1] = last;
                 return { ...prev, messages };
               });
               break;
@@ -334,315 +344,151 @@ function App() {
             case 'search_complete':
               setCurrentConversation((prev) => {
                 const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-
-                const updatedLastMsg = {
-                  ...lastMsg,
-                  loading: {
-                    ...lastMsg.loading,
-                    search: false
-                  },
-                  metadata: {
-                    ...lastMsg.metadata,
-                    search_query: event.data.search_query,
-                    extracted_query: event.data.extracted_query,
-                    search_context: event.data.search_context,
-                  }
+                const last = { ...messages[messages.length - 1] };
+                last.loading = { ...last.loading, search: false };
+                last.metadata = {
+                  ...last.metadata,
+                  search_query: event.data.search_query,
+                  search_context: event.data.search_context,
                 };
-
-                messages[messages.length - 1] = updatedLastMsg;
+                messages[messages.length - 1] = last;
                 return { ...prev, messages };
               });
               break;
 
-            case 'stage1_start':
+            case 'debate_start':
+            case 'chat_start':
+              break;
+
+            case 'round_start':
               setCurrentConversation((prev) => {
                 const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-
-                const updatedLastMsg = {
-                  ...lastMsg,
-                  loading: {
-                    ...lastMsg.loading,
-                    stage1: true
-                  },
-                  timers: {
-                    ...lastMsg.timers,
-                    stage1Start: Date.now()
-                  }
-                };
-
-                messages[messages.length - 1] = updatedLastMsg;
+                const last = { ...messages[messages.length - 1] };
+                last.loading = { ...last.loading, currentRound: event.data.round };
+                messages[messages.length - 1] = last;
                 return { ...prev, messages };
               });
               break;
 
-            case 'stage1_init':
-              console.log('DEBUG: Received stage1_init', event);
+            case 'turn_start':
               setCurrentConversation((prev) => {
                 const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-
-                const updatedLastMsg = {
-                  ...lastMsg,
-                  progress: {
-                    ...lastMsg.progress,
-                    stage1: {
-                      count: 0,
-                      total: event.total,
-                      currentModel: null
-                    }
-                  }
+                const last = { ...messages[messages.length - 1] };
+                last.loading = {
+                  ...last.loading,
+                  active: true,
+                  currentModel: event.data.model,
+                  currentRole: event.data.role_name,
                 };
-
-                messages[messages.length - 1] = updatedLastMsg;
+                messages[messages.length - 1] = last;
                 return { ...prev, messages };
               });
               break;
 
-            case 'stage1_progress':
+            case 'turn_complete':
               setCurrentConversation((prev) => {
                 const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-
-                // Immutable update for stage1
-                const updatedStage1 = lastMsg.stage1 ? [...lastMsg.stage1, event.data] : [event.data];
-                const updatedLastMsg = {
-                  ...lastMsg,
-                  progress: {
-                    ...lastMsg.progress,
-                    stage1: {
-                      count: event.count,
-                      total: event.total,
-                      currentModel: event.data.model
-                    }
-                  },
-                  stage1: updatedStage1
-                };
-
-                messages[messages.length - 1] = updatedLastMsg;
-
+                const last = { ...messages[messages.length - 1] };
+                last.debate_entries = [...(last.debate_entries || []), event.data];
+                last.loading = { ...last.loading, currentModel: null, currentRole: null };
+                messages[messages.length - 1] = last;
                 return { ...prev, messages };
               });
               break;
 
-            case 'stage1_complete':
+            case 'chat_complete':
               setCurrentConversation((prev) => {
                 const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-
-                // Immutable update to prevent React rendering issues
-                const updatedLastMsg = {
-                  ...lastMsg,
-                  stage1: event.data,
-                  loading: {
-                    ...lastMsg.loading,
-                    stage1: false
-                  },
-                  timers: {
-                    ...lastMsg.timers,
-                    stage1End: Date.now()
-                  }
-                };
-
-                messages[messages.length - 1] = updatedLastMsg;
+                const last = { ...messages[messages.length - 1] };
+                last.mode = 'chat';
+                last.chat_response = event.data;
+                last.loading = { ...last.loading, active: false };
+                messages[messages.length - 1] = last;
                 return { ...prev, messages };
               });
-              break;
-
-            case 'stage2_start':
-              setCurrentConversation((prev) => {
-                const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-
-                const updatedLastMsg = {
-                  ...lastMsg,
-                  loading: {
-                    ...lastMsg.loading,
-                    stage2: true
-                  },
-                  timers: {
-                    ...lastMsg.timers,
-                    stage2Start: Date.now()
-                  }
-                };
-
-                messages[messages.length - 1] = updatedLastMsg;
-                return { ...prev, messages };
-              });
-              break;
-
-            case 'stage2_init':
-              setCurrentConversation((prev) => {
-                const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-
-                const updatedLastMsg = {
-                  ...lastMsg,
-                  progress: {
-                    ...lastMsg.progress,
-                    stage2: {
-                      count: 0,
-                      total: event.total,
-                      currentModel: null
-                    }
-                  }
-                };
-
-                messages[messages.length - 1] = updatedLastMsg;
-                return { ...prev, messages };
-              });
-              break;
-
-            case 'stage2_progress':
-              setCurrentConversation((prev) => {
-                const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-
-                // Immutable update for stage2
-                const updatedStage2 = lastMsg.stage2 ? [...lastMsg.stage2, event.data] : [event.data];
-                const updatedLastMsg = {
-                  ...lastMsg,
-                  progress: {
-                    ...lastMsg.progress,
-                    stage2: {
-                      count: event.count,
-                      total: event.total,
-                      currentModel: event.data.model
-                    }
-                  },
-                  stage2: updatedStage2
-                };
-
-                messages[messages.length - 1] = updatedLastMsg;
-
-                return { ...prev, messages };
-              });
-              break;
-
-            case 'stage2_complete':
-              setCurrentConversation((prev) => {
-                const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-
-                // Immutable update to prevent React rendering issues
-                const updatedLastMsg = {
-                  ...lastMsg,
-                  stage2: event.data,
-                  loading: {
-                    ...lastMsg.loading,
-                    stage2: false
-                  },
-                  timers: {
-                    ...lastMsg.timers,
-                    stage2End: Date.now()
-                  },
-                  metadata: {
-                    ...lastMsg.metadata,
-                    ...event.metadata
-                  }
-                };
-
-                messages[messages.length - 1] = updatedLastMsg;
-                return { ...prev, messages };
-              });
-              break;
-
-            case 'stage3_start':
-              setCurrentConversation((prev) => {
-                const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-
-                const updatedLastMsg = {
-                  ...lastMsg,
-                  loading: {
-                    ...lastMsg.loading,
-                    stage3: true
-                  },
-                  timers: {
-                    ...lastMsg.timers,
-                    stage3Start: Date.now()
-                  }
-                };
-
-                messages[messages.length - 1] = updatedLastMsg;
-                return { ...prev, messages };
-              });
-              break;
-
-            case 'stage3_complete':
-              setCurrentConversation((prev) => {
-                const messages = [...prev.messages];
-                const lastMsg = messages[messages.length - 1];
-
-                // Immutable update to prevent React rendering issues
-                const updatedLastMsg = {
-                  ...lastMsg,
-                  stage3: event.data,
-                  loading: {
-                    ...lastMsg.loading,
-                    stage3: false
-                  },
-                  timers: {
-                    ...lastMsg.timers,
-                    stage3End: Date.now()
-                  }
-                };
-
-                messages[messages.length - 1] = updatedLastMsg;
-                return { ...prev, messages };
-              });
-              // Hide loading indicator once final answer is shown
               setIsLoading(false);
+              setIsDebateActive(false);
+              break;
+
+            case 'interjection_applied':
+              setCurrentConversation((prev) => {
+                const messages = [...prev.messages];
+                const last = { ...messages[messages.length - 1] };
+                last.debate_entries = [
+                  ...(last.debate_entries || []),
+                  { type: 'interjection', content: event.data.content }
+                ];
+                messages[messages.length - 1] = last;
+                return { ...prev, messages };
+              });
+              break;
+
+            case 'convergence_check':
+              setCurrentConversation((prev) => {
+                const messages = [...prev.messages];
+                const last = { ...messages[messages.length - 1] };
+                last.loading = { ...last.loading, convergence: false };
+                messages[messages.length - 1] = last;
+                return { ...prev, messages };
+              });
+              break;
+
+            case 'summary_start':
+              setCurrentConversation((prev) => {
+                const messages = [...prev.messages];
+                const last = { ...messages[messages.length - 1] };
+                last.loading = { ...last.loading, active: true, summary: true, currentModel: null };
+                messages[messages.length - 1] = last;
+                return { ...prev, messages };
+              });
+              setIsDebateActive(false);
+              break;
+
+            case 'summary_complete':
+              setCurrentConversation((prev) => {
+                const messages = [...prev.messages];
+                const last = { ...messages[messages.length - 1] };
+                last.summary = event.data;
+                last.loading = { ...last.loading, active: false, summary: false };
+                messages[messages.length - 1] = last;
+                return { ...prev, messages };
+              });
+              setIsLoading(false);
+              if (currentCampaignId) {
+                loadCampaigns();
+              }
               break;
 
             case 'title_complete':
-              // Reload conversations to get updated title
               loadConversations();
               break;
 
             case 'complete':
-              // Stream complete, reload conversations list
               loadConversations();
               setIsLoading(false);
+              setIsDebateActive(false);
               break;
 
             case 'error':
               console.error('Stream error:', event.message);
               setIsLoading(false);
+              setIsDebateActive(false);
               break;
-
-            default:
-              console.log('Unknown event type:', eventType);
           }
-        }, abortControllerRef.current?.signal);
+        },
+        abortControllerRef.current?.signal
+      );
     } catch (error) {
-      // Handle aborted requests - mark message as aborted
       if (error.name === 'AbortError') {
-        console.log('Request aborted');
-        // Mark the assistant message as aborted and stop timers
         setCurrentConversation((prev) => {
           if (!prev || prev.messages.length < 2) return prev;
           const messages = [...prev.messages];
-          const lastMsg = messages[messages.length - 1];
-          if (lastMsg.role === 'assistant') {
-            const now = Date.now();
+          const last = messages[messages.length - 1];
+          if (last.role === 'assistant') {
             messages[messages.length - 1] = {
-              ...lastMsg,
+              ...last,
               aborted: true,
-              loading: {
-                search: false,
-                stage1: false,
-                stage2: false,
-                stage3: false,
-              },
-              timers: {
-                ...lastMsg.timers,
-                // Stop any running timers
-                stage1End: lastMsg.timers?.stage1Start && !lastMsg.timers?.stage1End ? now : lastMsg.timers?.stage1End,
-                stage2End: lastMsg.timers?.stage2Start && !lastMsg.timers?.stage2End ? now : lastMsg.timers?.stage2End,
-                stage3End: lastMsg.timers?.stage3Start && !lastMsg.timers?.stage3End ? now : lastMsg.timers?.stage3End,
-              }
+              loading: { active: false, search: false, currentModel: null, currentRole: null, convergence: false, summary: false },
             };
           }
           return { ...prev, messages };
@@ -650,44 +496,39 @@ function App() {
         return;
       }
       console.error('Failed to send message:', error);
-      // Remove optimistic messages on error
       setCurrentConversation((prev) => ({
         ...prev,
         messages: prev.messages.slice(0, -2),
       }));
       setIsLoading(false);
+      setIsDebateActive(false);
     } finally {
-      // Only clear the controller if this is still the current request
-      // This prevents race conditions if user rapidly sends multiple messages
       if (requestIdRef.current === currentRequestId) {
         abortControllerRef.current = null;
       }
-      // Reload conversations to ensure title/messages are synced, even if aborted
       loadConversations();
     }
   };
 
-  // Mobile sidebar handlers
   const handleMobileSelectConversation = (id) => {
     handleSelectConversation(id);
-    setSidebarOpen(false); // Close sidebar on mobile after selection
+    setSidebarOpen(false);
   };
 
   const handleMobileNewConversation = async () => {
     await handleNewConversation();
-    setSidebarOpen(false); // Close sidebar on mobile after creating new conversation
+    setSidebarOpen(false);
   };
 
   const handleMobileOpenSettings = () => {
     setShowSettings(true);
-    setSidebarOpen(false); // Close sidebar on mobile
+    setSidebarOpen(false);
   };
 
   return (
     <div className="app">
-      {/* Mobile hamburger menu button */}
-      <button 
-        className="mobile-menu-btn" 
+      <button
+        className="mobile-menu-btn"
         onClick={() => setSidebarOpen(true)}
         aria-label="Open menu"
       >
@@ -705,20 +546,46 @@ function App() {
         onAbort={handleAbort}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        campaigns={campaigns}
+        currentCampaignId={currentCampaignId}
+        onNewCampaign={handleNewCampaign}
+        onSelectStage={handleSelectStage}
+        onDeleteCampaign={handleDeleteCampaign}
+        onManageCampaign={handleManageCampaign}
       />
-      <ChatInterface
-        conversation={currentConversation}
-        onSendMessage={handleSendMessage}
-        onAbort={handleAbort}
-        isLoading={isLoading}
-        councilConfigured={councilConfigured}
-        councilModels={councilModels}
-        chairmanModel={chairmanModel}
-        searchProvider={searchProvider}
-        onOpenSettings={handleOpenSettings}
-        executionMode={executionMode}
-        onExecutionModeChange={setExecutionMode}
-      />
+
+      <div className="main-content">
+        {currentCampaign && currentStage && (
+          <CampaignBar
+            campaign={currentCampaign}
+            stage={currentStage}
+            onManage={() => handleManageCampaign(currentCampaign.id)}
+          />
+        )}
+        <ChatInterface
+          conversation={currentConversation}
+          onSendMessage={handleSendMessage}
+          onAbort={handleAbort}
+          onInterject={handleInterject}
+          isLoading={isLoading}
+          isDebateActive={isDebateActive}
+          debateConfigured={debateConfigured}
+          debateModels={debateModels}
+          chairmanModel={chairmanModel}
+          searchProvider={searchProvider}
+          onOpenSettings={handleOpenSettings}
+        />
+      </div>
+
+      {managingCampaignId && (
+        <StageManager
+          campaignId={managingCampaignId}
+          onClose={handleStageManagerClose}
+          onSelectStage={handleSelectStage}
+          currentConversationId={currentConversationId}
+        />
+      )}
+
       {showSettings && (
         <Settings
           onClose={handleSettingsClose}

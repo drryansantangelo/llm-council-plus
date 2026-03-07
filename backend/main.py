@@ -1,8 +1,8 @@
 """FastAPI backend for LLM Council."""
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import os
@@ -12,8 +12,11 @@ import asyncio
 
 from . import storage
 from .council import generate_conversation_title, generate_search_query, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings, PROVIDERS
+from .debate import run_debate, add_interjection
 from .search import perform_web_search, SearchProvider
 from .settings import get_settings, update_settings, Settings, DEFAULT_COUNCIL_MODELS, DEFAULT_CHAIRMAN_MODEL, AVAILABLE_MODELS
+from .uploads import save_upload, get_upload_path, MAX_FILES_PER_MESSAGE, ALLOWED_EXTENSIONS
+from . import campaigns
 
 app = FastAPI(title="LLM Council Plus API")
 
@@ -38,6 +41,18 @@ class SendMessageRequest(BaseModel):
     content: str
     web_search: bool = False
     execution_mode: str = "full"  # 'chat_only', 'chat_ranking', 'full'
+
+
+class DebateMessageRequest(BaseModel):
+    """Request to start a debate in a conversation."""
+    content: str
+    web_search: bool = False
+    file_ids: Optional[List[str]] = None
+
+
+class InterjectionRequest(BaseModel):
+    """Request to interject in an active debate."""
+    content: str
 
 
 class ConversationMetadata(BaseModel):
@@ -310,6 +325,295 @@ async def send_message_stream(conversation_id: str, body: SendMessageRequest, re
     )
 
 
+@app.post("/api/conversations/{conversation_id}/debate/stream")
+async def debate_stream(conversation_id: str, body: DebateMessageRequest, request: Request):
+    """Start a debate and stream results via SSE."""
+    conversation = storage.get_conversation(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    is_first_message = len(conversation["messages"]) == 0
+
+    # Resolve file metadata from file_ids before entering the generator
+    file_metadatas = []
+    if body.file_ids:
+        from .uploads import get_upload_path, UPLOADS_DIR, IMAGE_EXTENSIONS, DOCUMENT_EXTENSIONS, MIME_MAP
+        import json as _json
+        from pathlib import Path as _Path
+
+        conv_upload_dir = UPLOADS_DIR / conversation_id
+        if conv_upload_dir.is_dir():
+            for fid in body.file_ids:
+                for f in conv_upload_dir.iterdir():
+                    if f.stem == fid and f.is_file():
+                        ext = f.suffix.lower()
+                        file_type = "image" if ext in IMAGE_EXTENSIONS else "document"
+                        meta = {
+                            "id": fid,
+                            "filename": f.name,
+                            "original_name": f.name,
+                            "type": file_type,
+                            "mime_type": MIME_MAP.get(ext, "application/octet-stream"),
+                            "size": f.stat().st_size,
+                        }
+                        if file_type == "document":
+                            from .uploads import extract_document_text
+                            meta["extracted_text"] = extract_document_text(str(f))
+                        file_metadatas.append(meta)
+                        break
+
+    async def event_generator():
+        try:
+            storage.add_user_message(conversation_id, body.content, file_metadatas=file_metadatas if file_metadatas else None)
+
+            title_task = None
+            if is_first_message:
+                title_task = asyncio.create_task(generate_conversation_title(body.content))
+
+            search_context = ""
+            if body.web_search:
+                if await request.is_disconnected():
+                    raise asyncio.CancelledError("Client disconnected")
+
+                settings = get_settings()
+                provider = SearchProvider(settings.search_provider)
+
+                if settings.tavily_api_key and provider == SearchProvider.TAVILY:
+                    os.environ["TAVILY_API_KEY"] = settings.tavily_api_key
+                if settings.brave_api_key and provider == SearchProvider.BRAVE:
+                    os.environ["BRAVE_API_KEY"] = settings.brave_api_key
+
+                yield f"data: {json.dumps({'type': 'search_start', 'data': {'provider': provider.value}})}\n\n"
+
+                search_query = generate_search_query(body.content)
+
+                search_result = await perform_web_search(
+                    search_query,
+                    settings.search_result_count,
+                    provider,
+                    settings.full_content_results,
+                    settings.search_keyword_extraction,
+                    hybrid_mode=settings.search_hybrid_mode,
+                )
+                search_context = search_result["results"]
+                extracted_query = search_result["extracted_query"]
+                search_intent = search_result.get("intent", "unknown")
+                yield f"data: {json.dumps({'type': 'search_complete', 'data': {'search_query': search_query, 'extracted_query': extracted_query, 'search_context': search_context, 'provider': provider.value, 'intent': search_intent}})}\n\n"
+                await asyncio.sleep(0.05)
+
+            campaign_context = ""
+            campaign_lookup = campaigns.lookup_campaign_for_conversation(conversation_id)
+            if campaign_lookup:
+                campaign_context = campaigns.get_stage_context(
+                    campaign_lookup["campaign_id"], campaign_lookup["stage_id"]
+                )
+
+            enriched_content = body.content
+            if campaign_context:
+                enriched_content = campaign_context + "\n\n" + body.content
+
+            debate_entries = []
+            summary_data = None
+
+            async for event in run_debate(conversation_id, enriched_content, search_context, request, file_metadatas=file_metadatas):
+                event_type = event.get("type")
+
+                if event_type == "turn_complete":
+                    debate_entries.append(event["data"])
+                elif event_type == "interjection_applied":
+                    debate_entries.append({"type": "interjection", "content": event["data"]["content"]})
+                elif event_type == "summary_complete":
+                    summary_data = event["data"]
+
+                yield f"data: {json.dumps(event)}\n\n"
+
+            if summary_data and campaign_lookup:
+                try:
+                    campaigns.update_stage(
+                        campaign_lookup["campaign_id"],
+                        campaign_lookup["stage_id"],
+                        {"summary": summary_data.get("response", "")},
+                    )
+                except Exception as e:
+                    print(f"Failed to auto-save campaign stage summary: {e}")
+
+            if title_task:
+                try:
+                    title = await title_task
+                    storage.update_conversation_title(conversation_id, title)
+                    yield f"data: {json.dumps({'type': 'title_complete', 'data': {'title': title}})}\n\n"
+                except Exception as e:
+                    print(f"Error waiting for title task: {e}")
+
+            metadata = {}
+            if search_context:
+                metadata["search_context"] = search_context
+
+            storage.add_debate_message(
+                conversation_id,
+                debate_entries,
+                summary_data,
+                metadata,
+            )
+
+        except asyncio.CancelledError:
+            print(f"Debate stream cancelled for {conversation_id}")
+            if title_task:
+                try:
+                    title = await asyncio.wait_for(title_task, timeout=2.0)
+                    storage.update_conversation_title(conversation_id, title)
+                except Exception:
+                    pass
+            raise
+        except Exception as e:
+            print(f"Debate stream error: {e}")
+            storage.add_error_message(conversation_id, f"Error: {str(e)}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@app.post("/api/conversations/{conversation_id}/interject")
+async def interject_in_debate(conversation_id: str, body: InterjectionRequest):
+    """Submit an interjection to an active debate."""
+    conversation = storage.get_conversation(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    add_interjection(conversation_id, body.content)
+    return {"status": "interjection_queued", "content": body.content}
+
+
+# ── Campaign endpoints ──────────────────────────────────────────────────
+
+
+class CreateCampaignRequest(BaseModel):
+    name: str
+    description: Optional[str] = ""
+
+
+class UpdateCampaignRequest(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class AddStageRequest(BaseModel):
+    name: str
+
+
+class ReorderStagesRequest(BaseModel):
+    stage_ids: List[str]
+
+
+class UpdateStageRequest(BaseModel):
+    name: Optional[str] = None
+    status: Optional[str] = None
+
+
+@app.post("/api/campaigns")
+async def create_campaign(body: CreateCampaignRequest):
+    campaign = campaigns.create_campaign(body.name, description=body.description or "")
+    return campaign
+
+
+@app.get("/api/campaigns")
+async def list_all_campaigns():
+    return campaigns.list_campaigns()
+
+
+@app.get("/api/campaigns/{campaign_id}")
+async def get_campaign(campaign_id: str):
+    campaign = campaigns.get_campaign(campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return campaign
+
+
+@app.put("/api/campaigns/{campaign_id}")
+async def update_campaign(campaign_id: str, body: UpdateCampaignRequest):
+    result = campaigns.update_campaign(campaign_id, name=body.name, description=body.description)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return result
+
+
+@app.delete("/api/campaigns/{campaign_id}")
+async def delete_campaign(campaign_id: str):
+    deleted = campaigns.delete_campaign(campaign_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return {"status": "deleted"}
+
+
+@app.post("/api/campaigns/{campaign_id}/stages")
+async def add_campaign_stage(campaign_id: str, body: AddStageRequest):
+    stage = campaigns.add_stage(campaign_id, body.name)
+    if stage is None:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return stage
+
+
+@app.put("/api/campaigns/{campaign_id}/stages/reorder")
+async def reorder_campaign_stages(campaign_id: str, body: ReorderStagesRequest):
+    result = campaigns.reorder_stages(campaign_id, body.stage_ids)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return result
+
+
+@app.put("/api/campaigns/{campaign_id}/stages/{stage_id}")
+async def update_campaign_stage(campaign_id: str, stage_id: str, body: UpdateStageRequest):
+    updates = {}
+    if body.name is not None:
+        updates["name"] = body.name
+    if body.status is not None:
+        updates["status"] = body.status
+    result = campaigns.update_stage(campaign_id, stage_id, updates)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Campaign or stage not found")
+    return result
+
+
+@app.delete("/api/campaigns/{campaign_id}/stages/{stage_id}")
+async def delete_campaign_stage(campaign_id: str, stage_id: str):
+    deleted = campaigns.delete_stage(campaign_id, stage_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Campaign or stage not found")
+    return {"status": "deleted"}
+
+
+@app.post("/api/conversations/{conversation_id}/upload")
+async def upload_file(conversation_id: str, file: UploadFile = File(...)):
+    """Upload a file attachment for a conversation."""
+    conversation = storage.get_conversation(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    try:
+        metadata = await save_upload(conversation_id, file)
+        return metadata
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+
+@app.get("/api/files/{conversation_id}/{filename}")
+async def serve_file(conversation_id: str, filename: str):
+    """Serve an uploaded file for frontend display."""
+    filepath = get_upload_path(conversation_id, filename)
+    if filepath is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(filepath)
+
+
 class UpdateSettingsRequest(BaseModel):
     """Request to update settings."""
     search_provider: Optional[str] = None
@@ -360,6 +664,15 @@ class UpdateSettingsRequest(BaseModel):
     stage2_prompt: Optional[str] = None
     stage3_prompt: Optional[str] = None
 
+    # Debate Mode
+    debate_models: Optional[List[str]] = None
+    debate_roles: Optional[List[str]] = None
+    debate_max_rounds: Optional[int] = None
+    debate_auto_stop: Optional[bool] = None
+    debate_temperature: Optional[float] = None
+    debate_initial_prompt: Optional[str] = None
+    debate_review_prompt: Optional[str] = None
+    debate_summary_prompt: Optional[str] = None
 
 
 class TestTavilyRequest(BaseModel):
@@ -417,8 +730,17 @@ async def get_app_settings():
         "stage1_prompt": settings.stage1_prompt,
         "stage2_prompt": settings.stage2_prompt,
         "stage3_prompt": settings.stage3_prompt,
-    }
 
+        # Debate Mode
+        "debate_models": settings.debate_models,
+        "debate_roles": settings.debate_roles,
+        "debate_max_rounds": settings.debate_max_rounds,
+        "debate_auto_stop": settings.debate_auto_stop,
+        "debate_temperature": settings.debate_temperature,
+        "debate_initial_prompt": settings.debate_initial_prompt,
+        "debate_review_prompt": settings.debate_review_prompt,
+        "debate_summary_prompt": settings.debate_summary_prompt,
+    }
 
 
 @app.get("/api/settings/defaults")
@@ -579,6 +901,24 @@ async def update_app_settings(request: UpdateSettingsRequest):
             )
         updates["execution_mode"] = request.execution_mode
 
+    # Debate settings
+    if request.debate_models is not None:
+        updates["debate_models"] = request.debate_models
+    if request.debate_roles is not None:
+        updates["debate_roles"] = request.debate_roles
+    if request.debate_max_rounds is not None:
+        updates["debate_max_rounds"] = max(1, min(5, request.debate_max_rounds))
+    if request.debate_auto_stop is not None:
+        updates["debate_auto_stop"] = request.debate_auto_stop
+    if request.debate_temperature is not None:
+        updates["debate_temperature"] = request.debate_temperature
+    if request.debate_initial_prompt is not None:
+        updates["debate_initial_prompt"] = request.debate_initial_prompt
+    if request.debate_review_prompt is not None:
+        updates["debate_review_prompt"] = request.debate_review_prompt
+    if request.debate_summary_prompt is not None:
+        updates["debate_summary_prompt"] = request.debate_summary_prompt
+
     if updates:
         settings = update_settings(**updates)
     else:
@@ -623,6 +963,16 @@ async def update_app_settings(request: UpdateSettingsRequest):
         "stage1_prompt": settings.stage1_prompt,
         "stage2_prompt": settings.stage2_prompt,
         "stage3_prompt": settings.stage3_prompt,
+
+        # Debate Mode
+        "debate_models": settings.debate_models,
+        "debate_roles": settings.debate_roles,
+        "debate_max_rounds": settings.debate_max_rounds,
+        "debate_auto_stop": settings.debate_auto_stop,
+        "debate_temperature": settings.debate_temperature,
+        "debate_initial_prompt": settings.debate_initial_prompt,
+        "debate_review_prompt": settings.debate_review_prompt,
+        "debate_summary_prompt": settings.debate_summary_prompt,
     }
 
 

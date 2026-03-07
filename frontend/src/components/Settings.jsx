@@ -3,6 +3,7 @@ import { api } from '../api';
 import SearchableModelSelect from './SearchableModelSelect';
 import ProviderSettings from './settings/ProviderSettings';
 import CouncilConfig from './settings/CouncilConfig';
+import DebateConfig from './settings/DebateConfig';
 import SearchSettings from './settings/SearchSettings';
 import PromptSettings from './settings/PromptSettings';
 import './Settings.css';
@@ -97,6 +98,13 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
   const [chairmanTemperature, setChairmanTemperature] = useState(0.4);
   const [stage2Temperature, setStage2Temperature] = useState(0.3);
 
+  // Debate Mode State
+  const [debateModels, setDebateModels] = useState(['', '']);
+  const [debateRoles, setDebateRoles] = useState(['', '']);
+  const [debateMaxRounds, setDebateMaxRounds] = useState(3);
+  const [debateAutoStop, setDebateAutoStop] = useState(true);
+  const [debateTemperature, setDebateTemperature] = useState(0.5);
+
   // System Prompts State
   const [prompts, setPrompts] = useState({
     stage1_prompt: '',
@@ -162,7 +170,12 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
       if (prompts.stage2_prompt !== settings.stage2_prompt) return true;
       if (prompts.stage3_prompt !== settings.stage3_prompt) return true;
 
-      // Note: API keys are auto-saved on test, so we don't check them here
+      // Debate
+      if (JSON.stringify(debateModels) !== JSON.stringify(settings.debate_models || ['', ''])) return true;
+      if (JSON.stringify(debateRoles) !== JSON.stringify(settings.debate_roles || ['', ''])) return true;
+      if (debateMaxRounds !== (settings.debate_max_rounds ?? 3)) return true;
+      if (debateAutoStop !== (settings.debate_auto_stop ?? true)) return true;
+      if (debateTemperature !== (settings.debate_temperature ?? 0.5)) return true;
 
       return false;
     };
@@ -185,7 +198,12 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
     stage2Temperature,
     councilMemberFilters,
     chairmanFilter,
-    prompts
+    prompts,
+    debateModels,
+    debateRoles,
+    debateMaxRounds,
+    debateAutoStop,
+    debateTemperature,
   ]);
 
   // Helper to determine if filters need to switch based on availability
@@ -397,8 +415,14 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
         stage1_prompt: data.stage1_prompt || '',
         stage2_prompt: data.stage2_prompt || '',
         stage3_prompt: data.stage3_prompt || '',
-
       });
+
+      // Debate Mode
+      setDebateModels(data.debate_models || ['', '']);
+      setDebateRoles(data.debate_roles || ['', '']);
+      setDebateMaxRounds(data.debate_max_rounds ?? 3);
+      setDebateAutoStop(data.debate_auto_stop ?? true);
+      setDebateTemperature(data.debate_temperature ?? 0.5);
 
       // Clear Direct Keys (for security)
       setDirectKeys({
@@ -905,6 +929,35 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
     });
   };
 
+  // Debate handlers
+  const handleDebateModelChange = (index, modelId) => {
+    setDebateModels(prev => {
+      const updated = [...prev];
+      updated[index] = modelId;
+      return updated;
+    });
+  };
+
+  const handleDebateRoleChange = (index, roleText) => {
+    setDebateRoles(prev => {
+      const updated = [...prev];
+      updated[index] = roleText;
+      return updated;
+    });
+  };
+
+  const handleAddDebater = () => {
+    if (debateModels.length >= 3) return;
+    setDebateModels(prev => [...prev, '']);
+    setDebateRoles(prev => [...prev, '']);
+  };
+
+  const handleRemoveDebater = (index) => {
+    if (debateModels.length <= 1) return;
+    setDebateModels(prev => prev.filter((_, i) => i !== index));
+    setDebateRoles(prev => prev.filter((_, i) => i !== index));
+  };
+
   const handlePromptChange = (key, value) => {
     setPrompts(prev => ({
       ...prev,
@@ -1243,6 +1296,14 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
         // Remote/Local filters for each selection
         council_member_filters: councilMemberFilters,
         chairman_filter: chairmanFilter,
+
+        // Debate Mode
+        debate_models: debateModels,
+        debate_roles: debateRoles,
+        debate_max_rounds: debateMaxRounds,
+        debate_auto_stop: debateAutoStop,
+        debate_temperature: debateTemperature,
+
         // Prompts
         ...prompts
       };
@@ -1423,16 +1484,10 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
               LLM API Keys
             </button>
             <button
-              className={`sidebar-nav-item ${activeSection === 'council' ? 'active' : ''}`}
-              onClick={() => setActiveSection('council')}
+              className={`sidebar-nav-item ${activeSection === 'debate' ? 'active' : ''}`}
+              onClick={() => setActiveSection('debate')}
             >
-              Council Config
-            </button>
-            <button
-              className={`sidebar-nav-item ${activeSection === 'prompts' ? 'active' : ''}`}
-              onClick={() => setActiveSection('prompts')}
-            >
-              System Prompts
+              Debate Config
             </button>
             <button
               className={`sidebar-nav-item ${activeSection === 'search' ? 'active' : ''}`}
@@ -1495,12 +1550,11 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
               />
             )}
 
-            {/* COUNCIL CONFIGURATION */}
-            {activeSection === 'council' && (
-              <CouncilConfig
+            {/* DEBATE CONFIGURATION */}
+            {activeSection === 'debate' && (
+              <DebateConfig
                 settings={settings}
                 ollamaStatus={ollamaStatus}
-                // State
                 enabledProviders={enabledProviders}
                 setEnabledProviders={setEnabledProviders}
                 directProviderToggles={directProviderToggles}
@@ -1508,51 +1562,36 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
                 showFreeOnly={showFreeOnly}
                 setShowFreeOnly={setShowFreeOnly}
                 isLoadingModels={isLoadingModels}
-                rateLimitWarning={rateLimitWarning}
-                councilModels={councilModels}
-                councilMemberFilters={councilMemberFilters}
+                debateModels={debateModels}
+                debateRoles={debateRoles}
                 chairmanModel={chairmanModel}
                 setChairmanModel={setChairmanModel}
                 chairmanFilter={chairmanFilter}
                 setChairmanFilter={setChairmanFilter}
-                councilTemperature={councilTemperature}
-                setCouncilTemperature={setCouncilTemperature}
+                debateTemperature={debateTemperature}
+                setDebateTemperature={setDebateTemperature}
                 chairmanTemperature={chairmanTemperature}
                 setChairmanTemperature={setChairmanTemperature}
-                // Data
+                debateMaxRounds={debateMaxRounds}
+                setDebateMaxRounds={setDebateMaxRounds}
+                debateAutoStop={debateAutoStop}
+                setDebateAutoStop={setDebateAutoStop}
                 allModels={allAvailableModels}
                 filteredModels={filteredAvailableModels}
                 ollamaAvailableModels={ollamaAvailableModels}
                 customEndpointName={customEndpointName}
                 customEndpointUrl={customEndpointUrl}
-                // Callbacks
-                handleFeelingLucky={handleFeelingLucky}
-                handleMemberFilterChange={handleMemberFilterChange}
-                handleCouncilModelChange={handleCouncilModelChange}
-                handleRemoveCouncilMember={handleRemoveCouncilMember}
-                handleAddCouncilMember={handleAddCouncilMember}
+                handleDebateModelChange={handleDebateModelChange}
+                handleDebateRoleChange={handleDebateRoleChange}
+                handleAddDebater={handleAddDebater}
+                handleRemoveDebater={handleRemoveDebater}
                 setActiveSection={setActiveSection}
-                setActivePromptTab={setActivePromptTab}
-                // Validation
                 validationErrors={validationErrors}
                 chairmanSelectRef={chairmanSelectRef}
               />
             )}
 
-            {/* SYSTEM PROMPTS */}
-            {activeSection === 'prompts' && (
-              <PromptSettings
-                prompts={prompts}
-                handlePromptChange={handlePromptChange}
-                handleResetPrompt={handleResetPrompt}
-                activePromptTab={activePromptTab}
-                setActivePromptTab={setActivePromptTab}
-                stage2Temperature={stage2Temperature}
-                setStage2Temperature={setStage2Temperature}
-              />
-            )}
-
-            {/* SEARCH PROVIDERS (New Section) */}
+            {/* SEARCH PROVIDERS */}
             {activeSection === 'search' && (
               <SearchSettings
                 settings={settings}
@@ -1596,7 +1635,7 @@ export default function Settings({ onClose, ollamaStatus, onRefreshOllama, initi
               <section className="settings-section">
                 <h3>Backup & Reset</h3>
                 <p className="section-description">
-                  Save or restore your council configuration (models, prompts, settings).
+                  Save or restore your debate configuration (models, roles, settings).
                   <br /><em>Note: API keys are NOT exported for security.</em>
                 </p>
 

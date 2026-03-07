@@ -200,23 +200,37 @@ def list_conversations() -> List[Dict[str, Any]]:
     return index
 
 
-def add_user_message(conversation_id: str, content: str):
+def add_user_message(conversation_id: str, content: str, file_metadatas: Optional[List[Dict[str, Any]]] = None):
     """
     Add a user message to a conversation.
 
     Args:
         conversation_id: Conversation identifier
         content: User message content
+        file_metadatas: Optional list of attached file metadata dicts
     """
     conversation = get_conversation(conversation_id)
     if conversation is None:
         raise ValueError(f"Conversation {conversation_id} not found")
 
-    conversation["messages"].append({
+    msg: Dict[str, Any] = {
         "role": "user",
-        "content": content
-    })
+        "content": content,
+    }
+    if file_metadatas:
+        msg["files"] = [
+            {
+                "id": m["id"],
+                "filename": m["filename"],
+                "original_name": m["original_name"],
+                "type": m["type"],
+                "mime_type": m["mime_type"],
+                "size": m["size"],
+            }
+            for m in file_metadatas
+        ]
 
+    conversation["messages"].append(msg)
     save_conversation(conversation)
 
 
@@ -282,6 +296,39 @@ def add_error_message(conversation_id: str, error_text: str):
         "stage2": [],
         "stage3": None
     }
+
+    conversation["messages"].append(message)
+    save_conversation(conversation)
+
+
+def add_debate_message(
+    conversation_id: str,
+    debate_entries: List[Dict[str, Any]],
+    summary: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+):
+    """
+    Add a debate result message to a conversation.
+
+    Args:
+        conversation_id: Conversation identifier
+        debate_entries: List of debate turns and interjections
+        summary: Chairman summary response
+        metadata: Optional metadata (search context, etc.)
+    """
+    conversation = get_conversation(conversation_id)
+    if conversation is None:
+        raise ValueError(f"Conversation {conversation_id} not found")
+
+    message = {
+        "role": "assistant",
+        "mode": "debate",
+        "debate_entries": debate_entries,
+        "summary": summary,
+    }
+
+    if metadata:
+        message["metadata"] = metadata
 
     conversation["messages"].append(message)
     save_conversation(conversation)

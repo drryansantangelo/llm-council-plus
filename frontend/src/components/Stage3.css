@@ -53,7 +53,7 @@
   color: var(--text-primary);
   line-height: 1.7;
   font-size: 15px;
-  font-family: var(--font-content);
+  font-family: var(--font-ui);
 }
 
 /* Premium Gold Theme */
@@ -168,7 +168,7 @@
   color: #e2e8f0;
   line-height: 1.8;
   font-size: 16px;
-  font-family: var(--font-content);
+  font-family: var(--font-ui);
 }
 
 /* ==================== MOBILE RESPONSIVE ==================== */

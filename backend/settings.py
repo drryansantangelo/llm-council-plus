@@ -63,7 +63,10 @@ AVAILABLE_MODELS = [
 from .prompts import (
     STAGE1_PROMPT_DEFAULT,
     STAGE2_PROMPT_DEFAULT,
-    STAGE3_PROMPT_DEFAULT
+    STAGE3_PROMPT_DEFAULT,
+    DEBATE_INITIAL_PROMPT_DEFAULT,
+    DEBATE_REVIEW_PROMPT_DEFAULT,
+    DEBATE_SUMMARY_PROMPT_DEFAULT,
 )
 
 class Settings(BaseModel):
@@ -123,6 +126,18 @@ class Settings(BaseModel):
     
     # Execution Mode
     execution_mode: str = "full"  # Default execution mode: 'chat_only', 'chat_ranking', 'full'
+
+    # Debate Mode Settings
+    debate_models: List[str] = ["", ""]
+    debate_roles: List[str] = ["", ""]
+    debate_max_rounds: int = 3
+    debate_auto_stop: bool = True
+    debate_temperature: float = 0.5
+
+    # Debate Prompts
+    debate_initial_prompt: str = DEBATE_INITIAL_PROMPT_DEFAULT
+    debate_review_prompt: str = DEBATE_REVIEW_PROMPT_DEFAULT
+    debate_summary_prompt: str = DEBATE_SUMMARY_PROMPT_DEFAULT
 
 
 def get_settings() -> Settings:

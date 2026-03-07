@@ -14,6 +14,26 @@ class GoogleProvider(LLMProvider):
         settings = get_settings()
         return settings.google_api_key or ""
 
+    def _content_to_gemini_parts(self, content):
+        """Convert OpenAI-format content (string or multimodal array) to Gemini parts."""
+        if isinstance(content, str):
+            return [{"text": content}]
+
+        if not isinstance(content, list):
+            return [{"text": str(content)}]
+
+        parts = []
+        for block in content:
+            if block.get("type") == "text":
+                parts.append({"text": block["text"]})
+            elif block.get("type") == "image_url":
+                data_url = block["image_url"]["url"]
+                if data_url.startswith("data:"):
+                    header, b64data = data_url.split(",", 1)
+                    mime_type = header.split(":")[1].split(";")[0]
+                    parts.append({"inline_data": {"mime_type": mime_type, "data": b64data}})
+        return parts if parts else [{"text": str(content)}]
+
     async def query(self, model_id: str, messages: List[Dict[str, str]], timeout: float = 120.0, temperature: float = 0.7) -> Dict[str, Any]:
         api_key = self._get_api_key()
         if not api_key:
@@ -21,17 +41,17 @@ class GoogleProvider(LLMProvider):
             
         model = model_id.removeprefix("google:")
         
-        # Convert messages to Gemini format
         contents = []
         system_instruction = None
         
         for msg in messages:
             if msg["role"] == "system":
-                system_instruction = {"parts": [{"text": msg["content"]}]}
+                sys_content = msg["content"] if isinstance(msg["content"], str) else str(msg["content"])
+                system_instruction = {"parts": [{"text": sys_content}]}
             elif msg["role"] == "user":
-                contents.append({"role": "user", "parts": [{"text": msg["content"]}]})
+                contents.append({"role": "user", "parts": self._content_to_gemini_parts(msg["content"])})
             elif msg["role"] == "assistant":
-                contents.append({"role": "model", "parts": [{"text": msg["content"]}]})
+                contents.append({"role": "model", "parts": self._content_to_gemini_parts(msg["content"])})
         
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:

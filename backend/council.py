@@ -46,8 +46,13 @@ def get_provider_for_model(model_id: str) -> Any:
     return PROVIDERS["openrouter"]
 
 
-async def query_model(model: str, messages: List[Dict[str, str]], timeout: float = 120.0, temperature: float = 0.7) -> Dict[str, Any]:
-    """Dispatch query to appropriate provider."""
+async def query_model(model: str, messages: List[Dict[str, Any]], timeout: float = 120.0, temperature: float = 0.7) -> Dict[str, Any]:
+    """Dispatch query to appropriate provider.
+    
+    Messages may contain multimodal content arrays (image_url + text blocks)
+    when files are attached. The content field can be a plain string or a list
+    of content blocks -- providers forward them transparently to OpenAI-compatible APIs.
+    """
     provider = get_provider_for_model(model)
     return await provider.query(model, messages, timeout, temperature)
 

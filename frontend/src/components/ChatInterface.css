@@ -419,6 +419,185 @@
   display: none;
 }
 
+/* Attach Button */
+.attach-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: rgba(148, 163, 184, 0.1);
+  margin-bottom: 6px;
+  position: relative;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  opacity: 0.6;
+}
+
+.attach-toggle:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.2);
+  opacity: 0.9;
+}
+
+.attach-toggle.has-files {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.3);
+  opacity: 1;
+}
+
+.attach-toggle:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.attach-icon {
+  font-size: 17px;
+  transition: all 0.2s;
+}
+
+.attach-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: var(--accent-primary);
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-ui);
+}
+
+/* Attachment Previews (below input, inside form) */
+.attachment-previews {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 4px;
+}
+
+.attachment-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 4px;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 10px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--text-secondary);
+  max-width: 200px;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.attachment-thumb {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.attachment-doc-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+  width: 32px;
+  text-align: center;
+}
+
+.attachment-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.attachment-size {
+  color: var(--text-muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.attachment-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 2px;
+  line-height: 1;
+  transition: color 0.15s;
+  flex-shrink: 0;
+}
+
+.attachment-remove:hover {
+  color: #ef4444;
+}
+
+/* Drag-over state on the form */
+.input-container.drag-over {
+  border-color: rgba(59, 130, 246, 0.6);
+  background: rgba(59, 130, 246, 0.08);
+  box-shadow: var(--shadow-glass), 0 0 0 2px rgba(59, 130, 246, 0.25);
+}
+
+/* User message attachment display */
+.user-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.user-attachment-image {
+  max-width: 200px;
+  max-height: 160px;
+  border-radius: 10px;
+  object-fit: cover;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.user-attachment-image:hover {
+  border-color: rgba(59, 130, 246, 0.5);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.user-attachment-image.enlarged {
+  max-width: 100%;
+  max-height: 600px;
+}
+
+.user-attachment-doc {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 10px;
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.user-attachment-doc .doc-icon {
+  font-size: 18px;
+}
+
+.user-attachment-doc .doc-name {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
 /* Scroll to Bottom */
 .scroll-bottom-btn {
   position: absolute;

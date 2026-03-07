@@ -100,7 +100,7 @@ body::after {
 
 /* Markdown Content Styling */
 .markdown-content {
-  font-family: var(--font-content);
+  font-family: var(--font-ui);
   font-size: 15px;
   line-height: 1.75;
   color: #e2e8f0;
