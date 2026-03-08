@@ -48,6 +48,8 @@ class DebateMessageRequest(BaseModel):
     content: str
     web_search: bool = False
     file_ids: Optional[List[str]] = None
+    mode: Optional[str] = None
+    chat_model: Optional[str] = None
 
 
 class InterjectionRequest(BaseModel):
@@ -100,9 +102,31 @@ async def get_conversation(conversation_id: str):
     return conversation
 
 
+class RenameConversationRequest(BaseModel):
+    title: str
+
+
+@app.put("/api/conversations/{conversation_id}/title")
+async def rename_conversation(conversation_id: str, body: RenameConversationRequest):
+    """Rename a conversation."""
+    conversation = storage.get_conversation(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    storage.update_conversation_title(conversation_id, body.title)
+    return {"status": "updated", "title": body.title}
+
+
 @app.delete("/api/conversations/{conversation_id}")
 async def delete_conversation(conversation_id: str):
-    """Delete a conversation."""
+    """Delete a conversation, also removing it from any campaign stage."""
+    campaign_lookup = campaigns.lookup_campaign_for_conversation(conversation_id)
+    if campaign_lookup:
+        campaigns.remove_conversation_from_stage(
+            campaign_lookup["campaign_id"],
+            campaign_lookup["stage_id"],
+            conversation_id,
+        )
+
     deleted = storage.delete_conversation(conversation_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Conversation not found")
@@ -407,6 +431,9 @@ async def debate_stream(conversation_id: str, body: DebateMessageRequest, reques
                 campaign_context = campaigns.get_stage_context(
                     campaign_lookup["campaign_id"], campaign_lookup["stage_id"]
                 )
+                sources_context = campaigns.get_sources_context(campaign_lookup["campaign_id"])
+                if sources_context:
+                    campaign_context = campaign_context + "\n\n" + sources_context if campaign_context else sources_context
 
             enriched_content = body.content
             if campaign_context:
@@ -414,8 +441,11 @@ async def debate_stream(conversation_id: str, body: DebateMessageRequest, reques
 
             debate_entries = []
             summary_data = None
+            chat_response_data = None
 
-            async for event in run_debate(conversation_id, enriched_content, search_context, request, file_metadatas=file_metadatas):
+            force_chat = body.chat_model if body.mode == "chat" and body.chat_model else None
+
+            async for event in run_debate(conversation_id, enriched_content, search_context, request, file_metadatas=file_metadatas, force_chat_model=force_chat):
                 event_type = event.get("type")
 
                 if event_type == "turn_complete":
@@ -424,6 +454,8 @@ async def debate_stream(conversation_id: str, body: DebateMessageRequest, reques
                     debate_entries.append({"type": "interjection", "content": event["data"]["content"]})
                 elif event_type == "summary_complete":
                     summary_data = event["data"]
+                elif event_type == "chat_complete":
+                    chat_response_data = event["data"]
 
                 yield f"data: {json.dumps(event)}\n\n"
 
@@ -449,12 +481,19 @@ async def debate_stream(conversation_id: str, body: DebateMessageRequest, reques
             if search_context:
                 metadata["search_context"] = search_context
 
-            storage.add_debate_message(
-                conversation_id,
-                debate_entries,
-                summary_data,
-                metadata,
-            )
+            if chat_response_data:
+                storage.add_chat_message(
+                    conversation_id,
+                    chat_response_data,
+                    metadata if metadata else None,
+                )
+            else:
+                storage.add_debate_message(
+                    conversation_id,
+                    debate_entries,
+                    summary_data,
+                    metadata if metadata else None,
+                )
 
         except asyncio.CancelledError:
             print(f"Debate stream cancelled for {conversation_id}")
@@ -587,6 +626,58 @@ async def delete_campaign_stage(campaign_id: str, stage_id: str):
     if not deleted:
         raise HTTPException(status_code=404, detail="Campaign or stage not found")
     return {"status": "deleted"}
+
+
+@app.post("/api/campaigns/{campaign_id}/stages/{stage_id}/conversations")
+async def add_stage_conversation(campaign_id: str, stage_id: str):
+    result = campaigns.add_conversation_to_stage(campaign_id, stage_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Campaign or stage not found")
+    return result
+
+
+# ── Campaign Sources ──────────────────────────────────────────────────
+
+
+@app.post("/api/campaigns/{campaign_id}/sources")
+async def upload_campaign_source(campaign_id: str, file: UploadFile = File(...)):
+    """Upload a source file to a campaign."""
+    try:
+        meta = await campaigns.add_source(campaign_id, file)
+        if meta is None:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        return meta
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+
+@app.get("/api/campaigns/{campaign_id}/sources")
+async def list_campaign_sources(campaign_id: str):
+    """List all source files for a campaign."""
+    sources = campaigns.list_sources(campaign_id)
+    if sources is None:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return sources
+
+
+@app.delete("/api/campaigns/{campaign_id}/sources/{source_id}")
+async def delete_campaign_source(campaign_id: str, source_id: str):
+    """Delete a source file from a campaign."""
+    deleted = campaigns.delete_source(campaign_id, source_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Source not found")
+    return {"status": "deleted"}
+
+
+@app.get("/api/campaigns/{campaign_id}/sources/{source_id}/file")
+async def serve_campaign_source(campaign_id: str, source_id: str):
+    """Serve a campaign source file."""
+    filepath = campaigns.get_source_path(campaign_id, source_id)
+    if filepath is None:
+        raise HTTPException(status_code=404, detail="Source not found")
+    return FileResponse(filepath)
 
 
 @app.post("/api/conversations/{conversation_id}/upload")

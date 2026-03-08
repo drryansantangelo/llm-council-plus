@@ -57,6 +57,24 @@ export const api = {
   },
 
   /**
+   * Rename a conversation.
+   */
+  async renameConversation(conversationId, title) {
+    const response = await fetch(
+      `${API_BASE}/api/conversations/${conversationId}/title`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error('Failed to rename conversation');
+    }
+    return response.json();
+  },
+
+  /**
    * Delete a conversation.
    */
   async deleteConversation(conversationId) {
@@ -389,7 +407,7 @@ export const api = {
    * Start a debate and receive streaming updates.
    */
   async sendDebateStream(conversationId, options, onEvent, signal) {
-    const { content, webSearch = false, fileIds = [] } = options;
+    const { content, webSearch = false, fileIds = [], mode, chatModel } = options;
     const response = await fetch(
       `${API_BASE}/api/conversations/${conversationId}/debate/stream?_t=${Date.now()}`,
       {
@@ -402,6 +420,8 @@ export const api = {
           content,
           web_search: webSearch,
           file_ids: fileIds.length > 0 ? fileIds : undefined,
+          mode: mode || undefined,
+          chat_model: chatModel || undefined,
         }),
         signal,
         cache: 'no-store',
@@ -536,5 +556,48 @@ export const api = {
     });
     if (!response.ok) throw new Error('Failed to delete stage');
     return response.json();
+  },
+
+  async addStageConversation(campaignId, stageId) {
+    const response = await fetch(`${API_BASE}/api/campaigns/${campaignId}/stages/${stageId}/conversations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!response.ok) throw new Error('Failed to add conversation to stage');
+    return response.json();
+  },
+
+  // ── Campaign Sources ─────────────────────────────────────────────────
+
+  async uploadCampaignSource(campaignId, file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await fetch(`${API_BASE}/api/campaigns/${campaignId}/sources`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to upload source');
+    }
+    return response.json();
+  },
+
+  async listCampaignSources(campaignId) {
+    const response = await fetch(`${API_BASE}/api/campaigns/${campaignId}/sources`);
+    if (!response.ok) throw new Error('Failed to list sources');
+    return response.json();
+  },
+
+  async deleteCampaignSource(campaignId, sourceId) {
+    const response = await fetch(`${API_BASE}/api/campaigns/${campaignId}/sources/${sourceId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) throw new Error('Failed to delete source');
+    return response.json();
+  },
+
+  getCampaignSourceUrl(campaignId, sourceId) {
+    return `${API_BASE}/api/campaigns/${campaignId}/sources/${sourceId}/file`;
   },
 };

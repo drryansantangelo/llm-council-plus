@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar';
 import ChatInterface from './components/ChatInterface';
 import Settings from './components/Settings';
 import CampaignBar from './components/CampaignBar';
+import CampaignStageView from './components/CampaignStageView';
 import StageManager from './components/StageManager';
 import { api } from './api';
 import './App.css';
@@ -32,6 +33,7 @@ function App() {
   const [campaigns, setCampaigns] = useState([]);
   const [currentCampaignId, setCurrentCampaignId] = useState(null);
   const [currentStageId, setCurrentStageId] = useState(null);
+  const [showStageOverview, setShowStageOverview] = useState(false);
   const [managingCampaignId, setManagingCampaignId] = useState(null);
 
   useEffect(() => {
@@ -171,6 +173,7 @@ function App() {
   const handleNewConversation = async () => {
     setCurrentCampaignId(null);
     setCurrentStageId(null);
+    setShowStageOverview(false);
     const existingEmpty = conversations.find(conv => !conv.title && conv.message_count === 0);
     if (existingEmpty) {
       setCurrentConversationId(existingEmpty.id);
@@ -189,9 +192,22 @@ function App() {
   };
 
   const handleSelectConversation = (id) => {
-    setCurrentCampaignId(null);
-    setCurrentStageId(null);
+    let foundCampaign = null;
+    let foundStage = null;
+    for (const camp of campaigns) {
+      for (const stage of (camp.stages || [])) {
+        if ((stage.conversation_ids || []).includes(id)) {
+          foundCampaign = camp.id;
+          foundStage = stage.id;
+          break;
+        }
+      }
+      if (foundCampaign) break;
+    }
+    setCurrentCampaignId(foundCampaign);
+    setCurrentStageId(foundStage);
     setCurrentConversationId(id);
+    setShowStageOverview(false);
   };
 
   const handleDeleteConversation = async (id) => {
@@ -202,6 +218,7 @@ function App() {
         setCurrentConversationId(null);
         setCurrentConversation(null);
       }
+      await loadCampaigns();
     } catch (error) {
       console.error('Failed to delete conversation:', error);
     }
@@ -251,15 +268,114 @@ function App() {
     }
   };
 
-  const handleSelectStage = (campaignId, stage) => {
-    setCurrentCampaignId(campaignId);
-    setCurrentStageId(stage.id);
-    setCurrentConversationId(stage.conversation_id);
-    setSidebarOpen(false);
+  const handleSelectStage = async (campaignId, stage, conversationId) => {
+    if (conversationId) {
+      setCurrentCampaignId(campaignId);
+      setCurrentStageId(stage.id);
+      setCurrentConversationId(conversationId);
+      setShowStageOverview(false);
+      setSidebarOpen(false);
+      setManagingCampaignId(null);
+      await loadCampaigns();
+      loadConversations();
+    } else {
+      setCurrentCampaignId(campaignId);
+      setCurrentStageId(stage.id);
+      setCurrentConversationId(null);
+      setCurrentConversation(null);
+      setShowStageOverview(true);
+      setSidebarOpen(false);
+      setManagingCampaignId(null);
+      await loadCampaigns();
+      loadConversations();
+    }
+  };
+
+  const handleSelectStageChat = (convId) => {
+    setCurrentConversationId(convId);
+    setShowStageOverview(false);
+  };
+
+  const handleNewStageConversation = async (campaignId, stageId) => {
+    try {
+      const result = await api.addStageConversation(campaignId, stageId);
+      await loadCampaigns();
+      await loadConversations();
+      setCurrentCampaignId(campaignId);
+      setCurrentStageId(stageId);
+      setCurrentConversationId(result.conversation_id);
+      setShowStageOverview(false);
+      setSidebarOpen(false);
+    } catch (error) {
+      console.error('Failed to create stage conversation:', error);
+    }
   };
 
   const handleManageCampaign = (campaignId) => {
     setManagingCampaignId(campaignId);
+  };
+
+  const handleRenameCampaign = async (campaignId, newName) => {
+    try {
+      await api.updateCampaign(campaignId, { name: newName });
+      setCampaigns(prev => prev.map(c => c.id === campaignId ? { ...c, name: newName } : c));
+    } catch (error) {
+      console.error('Failed to rename campaign:', error);
+    }
+  };
+
+  const handleDuplicateCampaign = async (campaignId) => {
+    try {
+      const source = campaigns.find(c => c.id === campaignId);
+      if (!source) return;
+      const newCampaign = await api.createCampaign(source.name + ' (copy)');
+      setCampaigns(prev => [newCampaign, ...prev]);
+    } catch (error) {
+      console.error('Failed to duplicate campaign:', error);
+    }
+  };
+
+  const handleRenameStage = async (campaignId, stageId, newName) => {
+    try {
+      await api.updateStage(campaignId, stageId, { name: newName });
+      await loadCampaigns();
+    } catch (error) {
+      console.error('Failed to rename stage:', error);
+    }
+  };
+
+  const handleDeleteStage = async (campaignId, stageId) => {
+    try {
+      await api.deleteStage(campaignId, stageId);
+      await loadCampaigns();
+    } catch (error) {
+      console.error('Failed to delete stage:', error);
+    }
+  };
+
+  const handleDuplicateStage = async (campaignId, stageId) => {
+    try {
+      const campaign = campaigns.find(c => c.id === campaignId);
+      const stage = campaign?.stages?.find(s => s.id === stageId);
+      if (!stage) return;
+      await api.addStage(campaignId, stage.name + ' (copy)');
+      await loadCampaigns();
+    } catch (error) {
+      console.error('Failed to duplicate stage:', error);
+    }
+  };
+
+  const handleRenameConversation = async (convId, newName) => {
+    try {
+      await api.renameConversation(convId, newName);
+      setConversations(prev => prev.map(c => c.id === convId ? { ...c, title: newName } : c));
+    } catch (error) {
+      console.error('Failed to rename conversation:', error);
+    }
+  };
+
+  const handleDuplicateConversation = async (convId) => {
+    console.warn('Duplicate conversation: backend support pending');
   };
 
   const handleStageManagerClose = () => {
@@ -270,7 +386,7 @@ function App() {
   const currentCampaign = campaigns.find(c => c.id === currentCampaignId);
   const currentStage = currentCampaign?.stages?.find(s => s.id === currentStageId);
 
-  const handleSendMessage = async (content, webSearch, files = null) => {
+  const handleSendMessage = async (content, webSearch, files = null, mode = null, chatModel = null) => {
     if (!currentConversationId) return;
 
     const currentRequestId = ++requestIdRef.current;
@@ -304,11 +420,13 @@ function App() {
         messages: [...prev.messages, userMessage],
       }));
 
+      const isChat = mode === 'chat';
       const assistantMessage = {
         role: 'assistant',
-        mode: 'debate',
-        debate_entries: [],
-        summary: null,
+        mode: isChat ? 'chat' : 'debate',
+        ...(isChat
+          ? { chat_response: null }
+          : { debate_entries: [], summary: null }),
         metadata: null,
         loading: {
           active: true,
@@ -328,7 +446,7 @@ function App() {
 
       await api.sendDebateStream(
         currentConversationId,
-        { content, webSearch, fileIds },
+        { content, webSearch, fileIds, mode, chatModel },
         (eventType, event) => {
           switch (eventType) {
             case 'search_start':
@@ -552,29 +670,57 @@ function App() {
         onSelectStage={handleSelectStage}
         onDeleteCampaign={handleDeleteCampaign}
         onManageCampaign={handleManageCampaign}
+        onNewStageConversation={handleNewStageConversation}
+        onRenameCampaign={handleRenameCampaign}
+        onDuplicateCampaign={handleDuplicateCampaign}
+        onRenameStage={handleRenameStage}
+        onDeleteStage={handleDeleteStage}
+        onDuplicateStage={handleDuplicateStage}
+        onRenameConversation={handleRenameConversation}
+        onDuplicateConversation={handleDuplicateConversation}
       />
 
       <div className="main-content">
-        {currentCampaign && currentStage && (
-          <CampaignBar
+        {showStageOverview && currentCampaign && currentStage ? (
+          <CampaignStageView
             campaign={currentCampaign}
             stage={currentStage}
-            onManage={() => handleManageCampaign(currentCampaign.id)}
+            conversations={conversations}
+            onSelectChat={handleSelectStageChat}
+            onNewChat={() => handleNewStageConversation(currentCampaignId, currentStageId)}
+            onRenameChat={handleRenameConversation}
+            onDeleteChat={handleDeleteConversation}
+            onBack={() => {
+              setShowStageOverview(false);
+              setCurrentCampaignId(null);
+              setCurrentStageId(null);
+            }}
           />
+        ) : (
+          <>
+            {currentCampaign && currentStage && (
+              <CampaignBar
+                campaign={currentCampaign}
+                stage={currentStage}
+                currentConversationId={currentConversationId}
+                onManage={() => handleManageCampaign(currentCampaign.id)}
+              />
+            )}
+            <ChatInterface
+              conversation={currentConversation}
+              onSendMessage={handleSendMessage}
+              onAbort={handleAbort}
+              onInterject={handleInterject}
+              isLoading={isLoading}
+              isDebateActive={isDebateActive}
+              debateConfigured={debateConfigured}
+              debateModels={debateModels}
+              chairmanModel={chairmanModel}
+              searchProvider={searchProvider}
+              onOpenSettings={handleOpenSettings}
+            />
+          </>
         )}
-        <ChatInterface
-          conversation={currentConversation}
-          onSendMessage={handleSendMessage}
-          onAbort={handleAbort}
-          onInterject={handleInterject}
-          isLoading={isLoading}
-          isDebateActive={isDebateActive}
-          debateConfigured={debateConfigured}
-          debateModels={debateModels}
-          chairmanModel={chairmanModel}
-          searchProvider={searchProvider}
-          onOpenSettings={handleOpenSettings}
-        />
       </div>
 
       {managingCampaignId && (

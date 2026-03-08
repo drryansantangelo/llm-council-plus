@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { getModelVisuals, getShortModelName } from '../utils/modelHelpers';
 import './DebateView.css';
 
@@ -67,7 +68,7 @@ export default function DebateView({ entries, summary, loading, onInterject, isD
                 </div>
                 <div className="turn-content">
                   <div className="markdown-content">
-                    <ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
                       {typeof entry.response === 'string' ? entry.response : String(entry.response || '')}
                     </ReactMarkdown>
                   </div>
@@ -136,7 +137,7 @@ export default function DebateView({ entries, summary, loading, onInterject, isD
           </div>
           <div className="summary-content">
             <div className="markdown-content">
-              <ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {typeof summary.response === 'string' ? summary.response : String(summary.response || '')}
               </ReactMarkdown>
             </div>
@@ -180,30 +181,13 @@ export default function DebateView({ entries, summary, loading, onInterject, isD
 
 export function ChatResponseView({ response }) {
   if (!response) return null;
-  const visuals = getModelVisuals(response.model);
-  const shortName = getShortModelName(response.model);
 
   return (
-    <div className="debate-view">
-      <div className="debate-turn">
-        <div className="turn-header">
-          <div className="turn-identity">
-            <span className="turn-avatar" style={{ background: visuals.gradient }}>
-              {visuals.icon}
-            </span>
-            <div className="turn-meta">
-              <span className="turn-role">{response.role}</span>
-              <span className="turn-model">{shortName}</span>
-            </div>
-          </div>
-        </div>
-        <div className="turn-content">
-          <div className="markdown-content">
-            <ReactMarkdown>
-              {typeof response.response === 'string' ? response.response : String(response.response || '')}
-            </ReactMarkdown>
-          </div>
-        </div>
+    <div className="chat-response-view">
+      <div className="markdown-content">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          {typeof response.response === 'string' ? response.response : String(response.response || '')}
+        </ReactMarkdown>
       </div>
     </div>
   );

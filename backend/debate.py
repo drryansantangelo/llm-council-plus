@@ -46,29 +46,35 @@ async def run_debate(
     search_context: str = "",
     request: Any = None,
     file_metadatas: Optional[List[Dict[str, Any]]] = None,
+    force_chat_model: Optional[str] = None,
 ):
     """
     Run an iterative debate between models.
 
-    For 1 model: Simple chat response.
+    For 1 model (or force_chat_model): Simple chat response.
     For 2-3 models: Iterative debate with rounds.
 
     Yields SSE-ready dicts with 'type' and 'data' keys.
     """
     settings = get_settings()
-    models = settings.debate_models or []
-    roles = settings.debate_roles or []
+
+    if force_chat_model:
+        active_models = [force_chat_model]
+        active_roles = ["You are a helpful expert."]
+    else:
+        models = settings.debate_models or []
+        roles = settings.debate_roles or []
+        active_models = []
+        active_roles = []
+        for i, model in enumerate(models):
+            if model and model.strip():
+                active_models.append(model)
+                role = roles[i] if i < len(roles) else ""
+                active_roles.append(role if role else "You are a helpful expert.")
+
     max_rounds = settings.debate_max_rounds
     auto_stop = settings.debate_auto_stop
     temperature = settings.debate_temperature
-
-    active_models = []
-    active_roles = []
-    for i, model in enumerate(models):
-        if model and model.strip():
-            active_models.append(model)
-            role = roles[i] if i < len(roles) else ""
-            active_roles.append(role if role else "You are a helpful expert.")
 
     if not active_models:
         yield {"type": "error", "message": "No debate models configured. Go to Settings to add models."}

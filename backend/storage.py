@@ -301,6 +301,29 @@ def add_error_message(conversation_id: str, error_text: str):
     save_conversation(conversation)
 
 
+def add_chat_message(
+    conversation_id: str,
+    chat_response: Dict[str, Any],
+    metadata: Optional[Dict[str, Any]] = None,
+):
+    """Save a single-model chat response to the conversation."""
+    conversation = get_conversation(conversation_id)
+    if conversation is None:
+        raise ValueError(f"Conversation {conversation_id} not found")
+
+    message = {
+        "role": "assistant",
+        "mode": "chat",
+        "chat_response": chat_response,
+    }
+
+    if metadata:
+        message["metadata"] = metadata
+
+    conversation["messages"].append(message)
+    save_conversation(conversation)
+
+
 def add_debate_message(
     conversation_id: str,
     debate_entries: List[Dict[str, Any]],

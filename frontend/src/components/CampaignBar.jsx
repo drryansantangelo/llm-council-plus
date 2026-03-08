@@ -1,10 +1,13 @@
 import './CampaignBar.css';
 
-export default function CampaignBar({ campaign, stage, onManage }) {
+export default function CampaignBar({ campaign, stage, currentConversationId, onManage }) {
   if (!campaign || !stage) return null;
 
   const stageIndex = campaign.stages?.findIndex(s => s.id === stage.id) ?? -1;
   const totalStages = campaign.stages?.length ?? 0;
+  const convIds = stage.conversation_ids || [];
+  const chatIndex = convIds.indexOf(currentConversationId);
+  const showChatCount = convIds.length > 1;
 
   return (
     <div className="campaign-bar">
@@ -16,6 +19,7 @@ export default function CampaignBar({ campaign, stage, onManage }) {
         {totalStages > 0 && (
           <span className="campaign-bar-position">
             Stage {stageIndex + 1} of {totalStages}
+            {showChatCount && ` · Chat ${chatIndex + 1} of ${convIds.length}`}
           </span>
         )}
       </div>

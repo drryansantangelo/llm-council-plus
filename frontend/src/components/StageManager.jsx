@@ -181,7 +181,7 @@ export default function StageManager({ campaignId, onClose, onSelectStage, curre
                 <div key={stage.id} className="funnel-stage-card">
                   <div className="funnel-connector-top" style={{ display: idx === 0 ? 'none' : 'block' }} />
 
-                  <div className={`funnel-stage ${stage.conversation_id === currentConversationId ? 'current' : ''} ${stage.status === 'completed' ? 'completed' : ''}`}>
+                  <div className={`funnel-stage ${(stage.conversation_ids || []).includes(currentConversationId) ? 'current' : ''} ${stage.status === 'completed' ? 'completed' : ''}`}>
                     <div className="funnel-stage-left">
                       <button
                         className={`funnel-status-btn ${stage.status || 'active'}`}

@@ -268,7 +268,13 @@ export default function DebateConfig({
 
           <div className="subsection" style={{ marginTop: '16px' }}>
             <div className="heat-slider-header">
-              <h4>Summarizer Temperature</h4>
+              <h4>
+                Summarizer Temperature
+                <span className="info-tooltip-container">
+                  <span className="info-icon">i</span>
+                  <span className="info-tooltip">Controls the creativity of the Summarizer when generating the final synthesis after a debate. Lower values produce more focused, deterministic summaries. Higher values allow more creative, varied synthesis.</span>
+                </span>
+              </h4>
               <span className="heat-value">{chairmanTemperature.toFixed(1)}</span>
             </div>
             <div className="heat-slider-container">
@@ -308,7 +314,13 @@ export default function DebateConfig({
 
           <div className="subsection" style={{ marginTop: '16px' }}>
             <div className="heat-slider-header">
-              <h4>Debate Temperature</h4>
+              <h4>
+                Debate Temperature
+                <span className="info-tooltip-container">
+                  <span className="info-icon">i</span>
+                  <span className="info-tooltip">Controls the creativity of each debater model during their rounds. Lower values produce more consistent, analytical arguments. Higher values encourage more diverse, creative perspectives.</span>
+                </span>
+              </h4>
               <span className="heat-value">{debateTemperature.toFixed(1)}</span>
             </div>
             <div className="heat-slider-container">

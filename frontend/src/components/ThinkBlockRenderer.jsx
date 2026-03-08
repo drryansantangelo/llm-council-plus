@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import './ThinkBlockRenderer.css';
 
 // Collapsible think block component
@@ -18,7 +19,7 @@ function ThinkBlock({ content }) {
       </button>
       {isExpanded && (
         <div className="think-content">
-          <ReactMarkdown>{content}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
         </div>
       )}
     </div>
@@ -28,7 +29,7 @@ function ThinkBlock({ content }) {
 // Helper to parse and render content with <think> tags styled differently
 export default function ThinkBlockRenderer({ content }) {
   if (!content || typeof content !== 'string') {
-    return <ReactMarkdown>{String(content || 'No response')}</ReactMarkdown>;
+    return <ReactMarkdown remarkPlugins={[remarkGfm]}>{String(content || 'No response')}</ReactMarkdown>;
   }
 
   // Regex to match <think>...</think> blocks (handles multiline)
@@ -60,7 +61,7 @@ export default function ThinkBlockRenderer({ content }) {
 
   // If no think blocks found, render normally
   if (parts.length === 0) {
-    return <ReactMarkdown>{content}</ReactMarkdown>;
+    return <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>;
   }
 
   return (
@@ -70,7 +71,7 @@ export default function ThinkBlockRenderer({ content }) {
           <ThinkBlock key={index} content={part.content} />
         ) : (
           <div key={index} className="response-answer">
-            <ReactMarkdown>{part.content}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{part.content}</ReactMarkdown>
           </div>
         )
       ))}

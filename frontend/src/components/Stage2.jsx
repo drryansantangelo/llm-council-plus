@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import Skeleton from './common/Skeleton';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { getModelVisuals, getShortModelName } from '../utils/modelHelpers';
 import './Stage2.css';
 import StageTimer from './StageTimer';
@@ -163,7 +164,7 @@ export default function Stage2({ rankings, labelToModel, aggregateRankings, star
                 ) : (
                     <>
                         <div className="ranking-content markdown-content">
-                            <ReactMarkdown>
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
                                 {(() => {
                                     const ranking = currentRanking?.ranking;
                                     const rankingText = typeof ranking === 'string' ? ranking : String(ranking || '');
