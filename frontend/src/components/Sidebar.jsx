@@ -44,8 +44,8 @@ export default function Sidebar({
 }) {
   const [confirmingDelete, setConfirmingDelete] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [expandedCampaign, setExpandedCampaign] = useState(null);
-  const [expandedStage, setExpandedStage] = useState(null);
+  const [expandedCampaigns, setExpandedCampaigns] = useState(new Set());
+  const [expandedStages, setExpandedStages] = useState(new Set());
   const [campaignsCollapsed, setCampaignsCollapsed] = useState(false);
   const [newCampaignName, setNewCampaignName] = useState('');
   const [showNewCampaignInput, setShowNewCampaignInput] = useState(false);
@@ -363,10 +363,15 @@ export default function Sidebar({
                     {campaigns.map((campaign) => (
                       <div key={campaign.id} className="campaign-item">
                         <div
-                          className={`campaign-header-row ${expandedCampaign === campaign.id ? 'expanded' : ''}`}
-                          onClick={() => setExpandedCampaign(expandedCampaign === campaign.id ? null : campaign.id)}
+                          className={`campaign-header-row ${expandedCampaigns.has(campaign.id) ? 'expanded' : ''}`}
+                          onClick={() => setExpandedCampaigns(prev => {
+                            const next = new Set(prev);
+                            if (next.has(campaign.id)) next.delete(campaign.id);
+                            else next.add(campaign.id);
+                            return next;
+                          })}
                         >
-                          <span className={`collapse-arrow small ${expandedCampaign === campaign.id ? '' : 'collapsed'}`}>▾</span>
+                          <span className={`collapse-arrow small ${expandedCampaigns.has(campaign.id) ? '' : 'collapsed'}`}>▾</span>
                           {isRenaming('campaign', campaign.id) ? (
                             renderRenameInput()
                           ) : (
@@ -390,14 +395,14 @@ export default function Sidebar({
                           )}
                         </div>
 
-                        {expandedCampaign === campaign.id && (
+                        {expandedCampaigns.has(campaign.id) && (
                           <div className="campaign-stages">
                             {(campaign.stages || []).map((stage) => {
                               const convIds = stage.conversation_ids || [];
                               const validConvIds = convIds.filter(cid => cid in convTitleMap);
                               const hasChats = validConvIds.length > 0;
                               const isStageActive = convIds.includes(currentConversationId);
-                              const isExpanded = expandedStage === stage.id;
+                              const isExpanded = expandedStages.has(stage.id);
 
                               return (
                                 <div key={stage.id} className="stage-item-group">
@@ -405,7 +410,12 @@ export default function Sidebar({
                                     className={`stage-item ${isStageActive ? 'active' : ''}`}
                                     onClick={() => {
                                       if (hasChats) {
-                                        setExpandedStage(isExpanded ? null : stage.id);
+                                        setExpandedStages(prev => {
+                                          const next = new Set(prev);
+                                          if (next.has(stage.id)) next.delete(stage.id);
+                                          else next.add(stage.id);
+                                          return next;
+                                        });
                                       }
                                       onSelectStage && onSelectStage(campaign.id, stage, null);
                                     }}
