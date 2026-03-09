@@ -46,6 +46,8 @@ export default function ChatInterface({
   chairmanModel = null,
   searchProvider = 'duckduckgo',
   onOpenSettings,
+  readOnly = false,
+  readOnlyBanner = null,
 }) {
   const [input, setInput] = useState('');
   const [webSearch, setWebSearch] = useState(false);
@@ -351,6 +353,15 @@ export default function ChatInterface({
         <div ref={messagesEndRef} style={{ height: '20px' }} />
       </div>
 
+      {readOnly ? (
+        readOnlyBanner && (
+          <div className="input-area">
+            <div className="input-container config-required">
+              <span className="config-message">{readOnlyBanner}</span>
+            </div>
+          </div>
+        )
+      ) : (
       <div className="input-area">
         {!debateConfigured ? (
           <div className="input-container config-required">
@@ -511,6 +522,7 @@ export default function ChatInterface({
           </form>
         )}
       </div>
+      )}
     </div>
   );
 }

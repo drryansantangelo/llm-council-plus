@@ -1,4 +1,8 @@
-"""File upload handling: storage, text extraction, image encoding, and multimodal prompt building."""
+"""File upload handling: storage, text extraction, image encoding, and multimodal prompt building.
+
+Files are stored on the local filesystem scoped to user:
+  data/users/{user_id}/uploads/{conversation_id}/{filename}
+"""
 
 import base64
 import mimetypes
@@ -7,7 +11,7 @@ import uuid
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Union
 
-UPLOADS_DIR = Path("data/uploads")
+UPLOADS_BASE = Path("data/users")
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".doc"}
@@ -34,27 +38,25 @@ MIME_MAP = {
 }
 
 
-def _ensure_dir(conversation_id: str) -> Path:
-    """Ensure upload directory exists for a conversation."""
-    directory = UPLOADS_DIR / conversation_id
+def _uploads_dir(user_id: str, conversation_id: str) -> Path:
+    return UPLOADS_BASE / user_id / "uploads" / conversation_id
+
+
+def _ensure_dir(user_id: str, conversation_id: str) -> Path:
+    directory = _uploads_dir(user_id, conversation_id)
     directory.mkdir(parents=True, exist_ok=True)
     return directory
 
 
-def get_upload_path(conversation_id: str, filename: str) -> Optional[Path]:
-    """Get full path for an uploaded file, or None if it doesn't exist."""
-    path = UPLOADS_DIR / conversation_id / filename
+def get_upload_path(user_id: str, conversation_id: str, filename: str) -> Optional[Path]:
+    path = _uploads_dir(user_id, conversation_id) / filename
     if path.exists():
         return path
     return None
 
 
-async def save_upload(conversation_id: str, file) -> Dict[str, Any]:
-    """
-    Save a FastAPI UploadFile and return metadata.
-
-    Returns dict with: id, filename, original_name, type, category, size, extracted_text
-    """
+async def save_upload(user_id: str, conversation_id: str, file) -> Dict[str, Any]:
+    """Save an uploaded file and return metadata."""
     original_name = file.filename or "unknown"
     ext = Path(original_name).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
@@ -68,7 +70,7 @@ async def save_upload(conversation_id: str, file) -> Dict[str, Any]:
     file_id = uuid.uuid4().hex[:12]
     safe_name = f"{file_id}{ext}"
 
-    directory = _ensure_dir(conversation_id)
+    directory = _ensure_dir(user_id, conversation_id)
     filepath = directory / safe_name
     filepath.write_bytes(content)
 
@@ -92,10 +94,11 @@ async def save_upload(conversation_id: str, file) -> Dict[str, Any]:
     }
 
 
-def extract_document_text(filepath: str) -> Optional[str]:
-    """Extract text content from PDF, Word, or plain text documents."""
-    ext = Path(filepath).suffix.lower()
+# ── Text extraction (unchanged) ─────────────────────────────────────────
 
+
+def extract_document_text(filepath: str) -> Optional[str]:
+    ext = Path(filepath).suffix.lower()
     if ext == ".pdf":
         return _extract_pdf_text(filepath)
     elif ext in (".docx", ".doc"):
@@ -104,14 +107,11 @@ def extract_document_text(filepath: str) -> Optional[str]:
         return _extract_plain_text(filepath)
     elif ext in (".html", ".htm"):
         return _extract_html_text(filepath)
-
     return None
 
 
 def _extract_pdf_text(filepath: str) -> str:
-    """Extract text from a PDF using PyMuPDF."""
     import fitz
-
     text_parts = []
     try:
         with fitz.open(filepath) as doc:
@@ -119,7 +119,6 @@ def _extract_pdf_text(filepath: str) -> str:
                 text_parts.append(page.get_text())
     except Exception as e:
         return f"[Could not extract PDF text: {e}]"
-
     text = "\n".join(text_parts).strip()
     if len(text) < 50:
         return "[PDF contained very little extractable text — it may be image-based]"
@@ -127,9 +126,7 @@ def _extract_pdf_text(filepath: str) -> str:
 
 
 def _extract_docx_text(filepath: str) -> str:
-    """Extract text from a Word document."""
     from docx import Document
-
     try:
         doc = Document(filepath)
         paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
@@ -142,7 +139,6 @@ def _extract_docx_text(filepath: str) -> str:
 
 
 def _extract_plain_text(filepath: str) -> str:
-    """Read a plain text, markdown, or CSV file."""
     try:
         text = Path(filepath).read_text(encoding="utf-8", errors="replace")
         if not text.strip():
@@ -153,7 +149,6 @@ def _extract_plain_text(filepath: str) -> str:
 
 
 def _extract_html_text(filepath: str) -> str:
-    """Extract text from HTML, preserving structure as readable text."""
     import re
     try:
         raw = Path(filepath).read_text(encoding="utf-8", errors="replace")
@@ -173,12 +168,13 @@ def _extract_html_text(filepath: str) -> str:
         return f"[Could not extract HTML text: {e}]"
 
 
+# ── Image encoding and multimodal content ────────────────────────────────
+
+
 def get_image_base64(filepath: str) -> str:
-    """Read an image file and return a base64 data URL."""
     path = Path(filepath)
     ext = path.suffix.lower()
     mime = MIME_MAP.get(ext, "image/png")
-
     data = path.read_bytes()
     b64 = base64.b64encode(data).decode("utf-8")
     return f"data:{mime};base64,{b64}"
@@ -187,14 +183,10 @@ def get_image_base64(filepath: str) -> str:
 def build_multimodal_content(
     text_prompt: str,
     file_metadatas: List[Dict[str, Any]],
+    user_id: str,
     conversation_id: str,
 ) -> Union[str, List[Dict[str, Any]]]:
-    """
-    Build multimodal message content from a text prompt and file metadata.
-
-    If there are no image files, returns a plain string (with document text prepended).
-    If there are images, returns an OpenAI-compatible content array with image_url blocks.
-    """
+    """Build multimodal message content from a text prompt and file metadata."""
     if not file_metadatas:
         return text_prompt
 
@@ -207,7 +199,7 @@ def build_multimodal_content(
         if file_type == "document":
             extracted = meta.get("extracted_text")
             if not extracted:
-                fpath = get_upload_path(conversation_id, meta["filename"])
+                fpath = get_upload_path(user_id, conversation_id, meta["filename"])
                 if fpath:
                     extracted = extract_document_text(str(fpath))
             if extracted:
@@ -215,7 +207,7 @@ def build_multimodal_content(
                 doc_context_parts.append(f"--- Attached Document: {name} ---\n{extracted}")
 
         elif file_type == "image":
-            fpath = get_upload_path(conversation_id, meta["filename"])
+            fpath = get_upload_path(user_id, conversation_id, meta["filename"])
             if fpath:
                 data_url = get_image_base64(str(fpath))
                 image_blocks.append({
@@ -235,9 +227,8 @@ def build_multimodal_content(
     return content
 
 
-def get_file_metadata(conversation_id: str, file_id: str) -> Optional[Dict[str, Any]]:
-    """Look up a file by its ID and return metadata."""
-    directory = UPLOADS_DIR / conversation_id
+def get_file_metadata(user_id: str, conversation_id: str, file_id: str) -> Optional[Dict[str, Any]]:
+    directory = _uploads_dir(user_id, conversation_id)
     if not directory.exists():
         return None
 
@@ -253,13 +244,11 @@ def get_file_metadata(conversation_id: str, file_id: str) -> Optional[Dict[str, 
                 "category": category,
                 "size": f.stat().st_size,
             }
-
     return None
 
 
-def list_uploads(conversation_id: str) -> List[Dict[str, Any]]:
-    """List all uploaded files for a conversation."""
-    directory = UPLOADS_DIR / conversation_id
+def list_uploads(user_id: str, conversation_id: str) -> List[Dict[str, Any]]:
+    directory = _uploads_dir(user_id, conversation_id)
     if not directory.exists():
         return []
 

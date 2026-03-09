@@ -402,7 +402,8 @@
 .stage-view-source-meta {
   font-size: 12px;
   color: var(--text-muted);
-  margin-top: 1px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .stage-view-source-menu-btn {

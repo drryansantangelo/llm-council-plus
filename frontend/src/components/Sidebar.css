@@ -64,6 +64,8 @@
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  position: relative;
+  z-index: 10;
 }
 
 .sidebar-brand {
@@ -82,12 +84,6 @@
   background: rgba(255, 255, 255, 0.06);
 }
 
-.sidebar-logo {
-  height: 28px;
-  width: auto;
-  flex-shrink: 0;
-}
-
 .sidebar-app-name {
   font-size: 14px;
   font-weight: 600;
@@ -98,6 +94,77 @@
 
 .sidebar-app-accent {
   color: var(--accent-primary);
+}
+
+/* ── Profile Avatar ──────────────────────────────────────────────── */
+
+.profile-avatar-wrapper {
+  position: relative;
+}
+
+.profile-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent-primary, #3b82f6);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s, box-shadow 0.15s;
+  flex-shrink: 0;
+}
+
+.profile-avatar:hover {
+  opacity: 0.85;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35);
+}
+
+.profile-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: -10px;
+  background: rgba(15, 23, 42, 0.97);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 12px 14px;
+  width: 220px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.profile-popover-email {
+  font-size: 12px;
+  color: var(--text-muted, #94a3b8);
+  word-break: break-all;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.profile-popover-signout {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary, #cbd5e1);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: center;
+}
+
+.profile-popover-signout:hover {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #f87171;
 }
 
 .icon-button {
@@ -852,4 +919,26 @@
   .sidebar-resize-handle {
     display: none;
   }
+}
+
+/* ── Publish Dialog ──────────────────────────────────────────── */
+
+.publish-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.publish-dialog {
+  background: var(--bg-secondary, #16213e);
+  border: 1px solid var(--border-color, #2a2a4a);
+  border-radius: 12px;
+  padding: 1.5rem;
+  width: 90%;
+  max-width: 420px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 }

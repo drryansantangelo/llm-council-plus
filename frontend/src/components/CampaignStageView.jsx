@@ -86,6 +86,8 @@ export default function CampaignStageView({
   const [chatDebateConfigs, setChatDebateConfigs] = useState({});
   const [configuringChatId, setConfiguringChatId] = useState(null);
   const [globalDefaults, setGlobalDefaults] = useState(null);
+  const [publishDialog, setPublishDialog] = useState(null);
+  const [publishLoading, setPublishLoading] = useState(false);
 
   const stageConversations = React.useMemo(() => {
     if (!stage) return [];
@@ -293,6 +295,9 @@ export default function CampaignStageView({
       setConfirmDeleteId(convId);
     } else if (action === 'configure_experts') {
       setConfiguringChatId(convId === configuringChatId ? null : convId);
+    } else if (action === 'publish') {
+      const conv = conversations.find(c => c.id === convId);
+      setPublishDialog({ conversationId: convId, title: conv?.title || 'Untitled', description: '' });
     }
   };
 
@@ -359,7 +364,10 @@ export default function CampaignStageView({
     const srcId = sourceMenu.id;
     setSourceMenu(null);
 
-    if (action === 'rename') {
+    if (action === 'open') {
+      const url = api.getCampaignSourceUrl(campaign.id, srcId);
+      window.open(url, '_blank');
+    } else if (action === 'rename') {
       const src = sources.find(s => s.id === srcId);
       setSourceRenameValue(src?.original_name || '');
       setRenamingSourceId(srcId);
@@ -804,13 +812,13 @@ export default function CampaignStageView({
                       ) : (
                         <div className="stage-view-source-name">{source.original_name}</div>
                       )}
-                      {renamingSourceId !== source.id && (
-                        <div className="stage-view-source-meta">
+                    </div>
+                    {renamingSourceId !== source.id && (
+                      <div className="stage-view-source-meta">
                         {formatSize(source.size)}
                         {source.uploaded_at && ` · ${formatAbsoluteDate(source.uploaded_at)}`}
-                        </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
                     {confirmDeleteSourceId === source.id ? (
                       <div className="stage-view-delete-confirm" onClick={(e) => e.stopPropagation()}>
                         <span className="stage-view-delete-label">Delete?</span>
@@ -946,6 +954,9 @@ export default function CampaignStageView({
           className="context-menu"
           style={{ left: sourceMenu.x, top: sourceMenu.y }}
         >
+          <button className="context-menu-item" onClick={() => handleSourceMenuAction('open')}>
+            Open
+          </button>
           <button className="context-menu-item" onClick={() => handleSourceMenuAction('rename')}>
             Rename
           </button>
@@ -969,10 +980,85 @@ export default function CampaignStageView({
           <button className="context-menu-item" onClick={() => handleChatMenuAction('configure_experts')}>
             Configure Experts
           </button>
+          <button className="context-menu-item" onClick={() => handleChatMenuAction('publish')}>
+            Publish to Team
+          </button>
           <div className="context-menu-divider" />
           <button className="context-menu-item danger" onClick={() => handleChatMenuAction('delete')}>
             Delete
           </button>
+        </div>
+      )}
+
+      {/* ── Publish Dialog ──────────────────────────────────────── */}
+      {publishDialog && (
+        <div className="publish-overlay" onClick={() => setPublishDialog(null)}>
+          <div className="publish-dialog" onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 1rem', color: 'var(--text-primary, #e0e0e0)' }}>Publish to Team</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8125rem', color: 'var(--text-secondary, #aaa)', marginBottom: '0.25rem' }}>Title</label>
+                <input
+                  type="text"
+                  value={publishDialog.title}
+                  onChange={(e) => setPublishDialog(prev => ({ ...prev, title: e.target.value }))}
+                  style={{
+                    width: '100%', padding: '0.5rem 0.75rem',
+                    background: 'var(--bg-primary, #1a1a2e)',
+                    border: '1px solid var(--border-color, #2a2a4a)',
+                    borderRadius: '6px', color: 'var(--text-primary, #e0e0e0)',
+                    fontSize: '0.875rem', boxSizing: 'border-box',
+                  }}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8125rem', color: 'var(--text-secondary, #aaa)', marginBottom: '0.25rem' }}>Description</label>
+                <textarea
+                  value={publishDialog.description}
+                  onChange={(e) => setPublishDialog(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder="What are you sharing and why?"
+                  rows={3}
+                  style={{
+                    width: '100%', padding: '0.5rem 0.75rem',
+                    background: 'var(--bg-primary, #1a1a2e)',
+                    border: '1px solid var(--border-color, #2a2a4a)',
+                    borderRadius: '6px', color: 'var(--text-primary, #e0e0e0)',
+                    fontSize: '0.875rem', resize: 'vertical',
+                    fontFamily: 'inherit', boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+                <button
+                  onClick={() => setPublishDialog(null)}
+                  style={{
+                    padding: '0.5rem 1rem', background: 'transparent',
+                    border: '1px solid var(--border-color, #2a2a4a)',
+                    borderRadius: '6px', color: 'var(--text-secondary, #aaa)',
+                    cursor: 'pointer', fontSize: '0.875rem',
+                  }}
+                >Cancel</button>
+                <button
+                  onClick={async () => {
+                    setPublishLoading(true);
+                    try {
+                      await api.publishConversation(publishDialog.conversationId, publishDialog.title, publishDialog.description);
+                      setPublishDialog(null);
+                    } catch (e) { console.error('Failed to publish:', e); }
+                    finally { setPublishLoading(false); }
+                  }}
+                  disabled={publishLoading || !publishDialog.title.trim()}
+                  style={{
+                    padding: '0.5rem 1rem', background: 'var(--accent-color, #4a6cf7)',
+                    border: 'none', borderRadius: '6px', color: 'white',
+                    cursor: 'pointer', fontSize: '0.875rem', fontWeight: 600,
+                    opacity: publishLoading || !publishDialog.title.trim() ? 0.6 : 1,
+                  }}
+                >{publishLoading ? 'Publishing...' : 'Publish'}</button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

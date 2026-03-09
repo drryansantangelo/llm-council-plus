@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { api } from '../api';
 import './Sidebar.css';
 
 const PlusIcon = () => (
@@ -15,6 +16,44 @@ const EllipsisIcon = () => (
     <circle cx="11" cy="7" r="1.2" />
   </svg>
 );
+
+function ProfileAvatar({ userName, onSignOut }) {
+  const [open, setOpen] = useState(false);
+  const popoverRef = useRef(null);
+
+  const initial = (userName || '?').charAt(0).toUpperCase();
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
+
+  return (
+    <div className="profile-avatar-wrapper" ref={popoverRef}>
+      <button
+        className="profile-avatar"
+        onClick={() => setOpen(!open)}
+        title={userName || 'Account'}
+      >
+        {initial}
+      </button>
+      {open && (
+        <div className="profile-popover">
+          <div className="profile-popover-email">{userName}</div>
+          <button className="profile-popover-signout" onClick={onSignOut}>
+            Sign out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function Sidebar({
   conversations,
@@ -42,6 +81,10 @@ export default function Sidebar({
   onRenameConversation,
   onDuplicateConversation,
   onGoHome,
+  onSignOut,
+  userName,
+  onViewPublishedItem,
+  viewingPublishedItemId,
 }) {
   const [confirmingDelete, setConfirmingDelete] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -54,6 +97,11 @@ export default function Sidebar({
   const [contextMenu, setContextMenu] = useState(null);
   const [renamingItem, setRenamingItem] = useState(null);
   const [renameValue, setRenameValue] = useState('');
+  const [publishDialog, setPublishDialog] = useState(null);
+  const [publishLoading, setPublishLoading] = useState(false);
+  const [teamFeedCollapsed, setTeamFeedCollapsed] = useState(false);
+  const [teamFeed, setTeamFeed] = useState([]);
+  const [teamFeedLoading, setTeamFeedLoading] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const saved = localStorage.getItem('sidebarWidth');
     return saved ? parseInt(saved, 10) : 260;
@@ -182,6 +230,12 @@ export default function Sidebar({
       case 'manage':
         onManageCampaign?.(id);
         break;
+      case 'publish':
+        if (type === 'conversation') {
+          const title = convTitleMap[id] || 'Untitled';
+          setPublishDialog({ conversationId: id, title, description: '' });
+        }
+        break;
       default:
         break;
     }
@@ -197,6 +251,60 @@ export default function Sidebar({
   }, [renamingItem]);
 
   const renamingRef = useRef(false);
+
+  // ── Team Feed ────────────────────────────────────────────────────
+
+  const loadTeamFeed = useCallback(async () => {
+    setTeamFeedLoading(true);
+    try {
+      const items = await api.getTeamFeed();
+      setTeamFeed(items);
+    } catch (e) {
+      console.error('Failed to load team feed:', e);
+    } finally {
+      setTeamFeedLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadTeamFeed();
+  }, [loadTeamFeed]);
+
+  const handlePublish = async () => {
+    if (!publishDialog) return;
+    setPublishLoading(true);
+    try {
+      await api.publishConversation(
+        publishDialog.conversationId,
+        publishDialog.title,
+        publishDialog.description,
+      );
+      setPublishDialog(null);
+      loadTeamFeed();
+    } catch (e) {
+      console.error('Failed to publish:', e);
+    } finally {
+      setPublishLoading(false);
+    }
+  };
+
+  const handleDismissItem = async (itemId) => {
+    try {
+      await api.dismissItem(itemId);
+      setTeamFeed(prev => prev.filter(i => i.id !== itemId));
+    } catch (e) {
+      console.error('Failed to dismiss:', e);
+    }
+  };
+
+  const handleUnpublishItem = async (itemId) => {
+    try {
+      await api.unpublishItem(itemId);
+      setTeamFeed(prev => prev.filter(i => i.id !== itemId));
+    } catch (e) {
+      console.error('Failed to unpublish:', e);
+    }
+  };
 
   const commitRename = () => {
     if (renamingRef.current) return;
@@ -290,12 +398,16 @@ export default function Sidebar({
         <div className="sidebar-fixed-top">
           <div className="sidebar-header">
             <div className="sidebar-brand" onClick={onGoHome} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') onGoHome?.(); }}>
-              <img src="/dm-logo-white.svg" alt="Dynamic Media" className="sidebar-logo" />
               <span className="sidebar-app-name">DM Debate <span className="sidebar-app-accent">Studio</span></span>
             </div>
-            <button className="icon-button" onClick={onOpenSettings} title="Settings">
-              ⚙️
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <button className="icon-button" onClick={onOpenSettings} title="Settings">
+                ⚙️
+              </button>
+              {onSignOut && (
+                <ProfileAvatar userName={userName} onSignOut={onSignOut} />
+              )}
+            </div>
           </div>
 
           <button className="sidebar-new-debate" onClick={onNewConversation}>
@@ -557,6 +669,61 @@ export default function Sidebar({
               )}
             </div>
           </div>
+
+          {/* ── Team Feed ──────────────────────────────────────── */}
+          <div className="recents-section" style={{ marginTop: '0.5rem' }}>
+            <div className="recents-label">
+              <span
+                style={{ cursor: 'pointer' }}
+                onClick={() => setTeamFeedCollapsed(!teamFeedCollapsed)}
+              >
+                {teamFeedCollapsed ? '▸' : '▾'} Team Feed
+              </span>
+              <button className="section-add-btn" onClick={loadTeamFeed} title="Refresh feed">
+                ↻
+              </button>
+            </div>
+            {!teamFeedCollapsed && (
+              <div className="conversation-list">
+                {teamFeedLoading && teamFeed.length === 0 ? (
+                  <div className="sidebar-empty-state" style={{ fontSize: '0.75rem' }}>Loading...</div>
+                ) : teamFeed.length === 0 ? (
+                  <div className="sidebar-empty-state" style={{ fontSize: '0.75rem' }}>No shared items yet</div>
+                ) : (
+                  teamFeed.map(item => (
+                    <div
+                      key={item.id}
+                      className={`conversation-item ${viewingPublishedItemId === item.id ? 'active' : ''}`}
+                      title={`${item.title}\n${item.description}\nby ${item.userName}`}
+                      onClick={() => onViewPublishedItem?.(item.id)}
+                    >
+                      <div className="conversation-title" style={{ display: 'flex', flexDirection: 'column', gap: '1px' }}>
+                        <span style={{ fontSize: '0.8125rem' }}>{item.title}</span>
+                        <span style={{ fontSize: '0.6875rem', color: 'var(--text-tertiary, #666)' }}>
+                          by {item.userName} · {item.itemType}
+                        </span>
+                      </div>
+                      <div className="conversation-actions">
+                        {item.isOwner ? (
+                          <button
+                            className="row-action-btn"
+                            onClick={(e) => { e.stopPropagation(); handleUnpublishItem(item.id); }}
+                            title="Unpublish"
+                          >✕</button>
+                        ) : (
+                          <button
+                            className="row-action-btn"
+                            onClick={(e) => { e.stopPropagation(); handleDismissItem(item.id); }}
+                            title="Dismiss from feed"
+                          >✕</button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Resize handle */}
@@ -584,6 +751,11 @@ export default function Sidebar({
               Manage Stages
             </button>
           )}
+          {contextMenu.type !== 'campaign' && contextMenu.type !== 'stage' && (
+            <button className="context-menu-item" onClick={() => handleMenuAction('publish')}>
+              Publish to Team
+            </button>
+          )}
           <div className="context-menu-divider" />
           <button className="context-menu-item danger" onClick={() => handleMenuAction('delete')}>
             Delete
@@ -593,6 +765,90 @@ export default function Sidebar({
 
       {/* Transparent overlay to prevent interactions while resizing */}
       {isResizing && <div className="resize-overlay" />}
+
+      {/* ── Publish Dialog ──────────────────────────────────────── */}
+      {publishDialog && (
+        <div className="publish-overlay" onClick={() => setPublishDialog(null)}>
+          <div className="publish-dialog" onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 1rem', color: 'var(--text-primary, #e0e0e0)' }}>Publish to Team</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8125rem', color: 'var(--text-secondary, #aaa)', marginBottom: '0.25rem' }}>Title</label>
+                <input
+                  type="text"
+                  value={publishDialog.title}
+                  onChange={(e) => setPublishDialog(prev => ({ ...prev, title: e.target.value }))}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem 0.75rem',
+                    background: 'var(--bg-primary, #1a1a2e)',
+                    border: '1px solid var(--border-color, #2a2a4a)',
+                    borderRadius: '6px',
+                    color: 'var(--text-primary, #e0e0e0)',
+                    fontSize: '0.875rem',
+                    boxSizing: 'border-box',
+                  }}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8125rem', color: 'var(--text-secondary, #aaa)', marginBottom: '0.25rem' }}>Description</label>
+                <textarea
+                  value={publishDialog.description}
+                  onChange={(e) => setPublishDialog(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder="What are you sharing and why?"
+                  rows={3}
+                  style={{
+                    width: '100%',
+                    padding: '0.5rem 0.75rem',
+                    background: 'var(--bg-primary, #1a1a2e)',
+                    border: '1px solid var(--border-color, #2a2a4a)',
+                    borderRadius: '6px',
+                    color: 'var(--text-primary, #e0e0e0)',
+                    fontSize: '0.875rem',
+                    resize: 'vertical',
+                    fontFamily: 'inherit',
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+                <button
+                  onClick={() => setPublishDialog(null)}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    background: 'transparent',
+                    border: '1px solid var(--border-color, #2a2a4a)',
+                    borderRadius: '6px',
+                    color: 'var(--text-secondary, #aaa)',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handlePublish}
+                  disabled={publishLoading || !publishDialog.title.trim()}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    background: 'var(--accent-color, #4a6cf7)',
+                    border: 'none',
+                    borderRadius: '6px',
+                    color: 'white',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                    fontWeight: 600,
+                    opacity: publishLoading || !publishDialog.title.trim() ? 0.6 : 1,
+                  }}
+                >
+                  {publishLoading ? 'Publishing...' : 'Publish'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

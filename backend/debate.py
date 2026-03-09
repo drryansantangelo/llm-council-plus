@@ -42,20 +42,20 @@ def _build_debate_history_text(debate_history: List[Dict]) -> str:
     return "\n\n---\n\n".join(parts)
 
 
-def resolve_debate_config(conversation_id: str) -> Optional[Dict[str, Any]]:
+def resolve_debate_config(user_id: str, conversation_id: str) -> Optional[Dict[str, Any]]:
     """Resolve debate_config following the chain: conversation -> stage -> global.
 
     Returns a dict with ``debate_models`` and ``debate_roles`` keys, or None
     to indicate the caller should fall back to global settings.
     """
-    conv = _storage.get_conversation(conversation_id)
+    conv = _storage.get_conversation(user_id, conversation_id)
     if conv and conv.get("debate_config"):
         return conv["debate_config"]
 
-    lookup = campaigns.lookup_campaign_for_conversation(conversation_id)
+    lookup = campaigns.lookup_campaign_for_conversation(user_id, conversation_id)
     if lookup:
         stage_cfg = campaigns.get_stage_debate_config(
-            lookup["campaign_id"], lookup["stage_id"]
+            user_id, lookup["campaign_id"], lookup["stage_id"]
         )
         if stage_cfg:
             return stage_cfg
@@ -64,6 +64,7 @@ def resolve_debate_config(conversation_id: str) -> Optional[Dict[str, Any]]:
 
 
 async def run_debate(
+    user_id: str,
     conversation_id: str,
     user_query: str,
     search_context: str = "",
@@ -85,7 +86,7 @@ async def run_debate(
         active_models = [force_chat_model]
         active_roles = ["You are a helpful expert."]
     else:
-        override = resolve_debate_config(conversation_id)
+        override = resolve_debate_config(user_id, conversation_id)
         models = (override or {}).get("debate_models") or settings.debate_models or []
         roles = (override or {}).get("debate_roles") or settings.debate_roles or []
         active_models = []
@@ -117,7 +118,7 @@ async def run_debate(
         await asyncio.sleep(0.05)
 
         prompt = f"{role}\n\n{search_context_block}\n{user_query}" if search_context_block else f"{role}\n\n{user_query}"
-        content = build_multimodal_content(prompt, file_metadatas or [], conversation_id)
+        content = build_multimodal_content(prompt, file_metadatas or [], user_id, conversation_id)
         messages = [{"role": "user", "content": content}]
 
         try:
@@ -188,9 +189,8 @@ async def run_debate(
                     interjection_block=interjection_block,
                 )
 
-            # Only attach images on the first turn to avoid resending large base64 payloads
             use_files = file_metadatas if (not debate_history and file_metadatas) else []
-            msg_content = build_multimodal_content(prompt, use_files, conversation_id)
+            msg_content = build_multimodal_content(prompt, use_files, user_id, conversation_id)
             messages = [{"role": "user", "content": msg_content}]
 
             try:
@@ -241,9 +241,8 @@ async def run_debate(
             debate_history=history_text,
         )
 
-        # Include document context (text only) for the chairman summary
         doc_only = [m for m in (file_metadatas or []) if m["type"] == "document"]
-        summary_content = build_multimodal_content(summary_prompt, doc_only, conversation_id)
+        summary_content = build_multimodal_content(summary_prompt, doc_only, user_id, conversation_id)
         messages = [{"role": "user", "content": summary_content}]
 
         try:

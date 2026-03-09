@@ -5,11 +5,35 @@ import Settings from './components/Settings';
 import CampaignBar from './components/CampaignBar';
 import CampaignStageView from './components/CampaignStageView';
 import StageManager from './components/StageManager';
+import Login from './components/Login';
+import './components/Login.css';
 import { api } from './api';
+import { auth, onAuthStateChanged, signOut } from './firebase';
 import './App.css';
 import './components/StageCopyButtons.css';
 
 function App() {
+  const [firebaseUser, setFirebaseUser] = useState(undefined);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setFirebaseUser(user || null);
+    });
+    return unsubscribe;
+  }, []);
+
+  if (firebaseUser === undefined) {
+    return <div className="app-loading">Loading...</div>;
+  }
+
+  if (firebaseUser === null) {
+    return <Login />;
+  }
+
+  return <AppContent firebaseUser={firebaseUser} />;
+}
+
+function AppContent({ firebaseUser }) {
   const [conversations, setConversations] = useState([]);
   const [currentConversationId, setCurrentConversationId] = useState(null);
   const [currentConversation, setCurrentConversation] = useState(null);
@@ -34,6 +58,7 @@ function App() {
   const [currentCampaignId, setCurrentCampaignId] = useState(null);
   const [currentStageId, setCurrentStageId] = useState(null);
   const [showStageOverview, setShowStageOverview] = useState(false);
+  const [viewingPublishedItem, setViewingPublishedItem] = useState(null);
   const [managingCampaignId, setManagingCampaignId] = useState(null);
 
   useEffect(() => {
@@ -156,6 +181,7 @@ function App() {
     try {
       const conv = await api.getConversation(id);
       setCurrentConversation(conv);
+      setViewingPublishedItem(null);
     } catch (error) {
       console.error('Failed to load conversation:', error);
     }
@@ -167,6 +193,21 @@ function App() {
       setCampaigns(camps);
     } catch (error) {
       console.error('Failed to load campaigns:', error);
+    }
+  };
+
+  const handleViewPublishedItem = async (itemId) => {
+    try {
+      const item = await api.getPublishedItem(itemId);
+      setCurrentCampaignId(null);
+      setCurrentStageId(null);
+      setShowStageOverview(false);
+      setCurrentConversationId(null);
+      setViewingPublishedItem(item);
+      setCurrentConversation(item.conversationSnapshot);
+      setSidebarOpen(false);
+    } catch (error) {
+      console.error('Failed to load published item:', error);
     }
   };
 
@@ -686,6 +727,10 @@ function App() {
           handleNewConversation();
           setSidebarOpen(false);
         }}
+        onSignOut={() => signOut(auth)}
+        userName={firebaseUser?.email}
+        onViewPublishedItem={handleViewPublishedItem}
+        viewingPublishedItemId={viewingPublishedItem?.id}
       />
 
       <div className="main-content">
@@ -726,6 +771,8 @@ function App() {
               chairmanModel={chairmanModel}
               searchProvider={searchProvider}
               onOpenSettings={handleOpenSettings}
+              readOnly={!!viewingPublishedItem}
+              readOnlyBanner={viewingPublishedItem ? `Shared by ${viewingPublishedItem.userName} · ${new Date(viewingPublishedItem.publishedAt).toLocaleDateString()}` : null}
             />
           </>
         )}

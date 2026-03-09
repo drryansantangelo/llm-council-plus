@@ -205,3 +205,13 @@
 .free-filter-label {
   color: var(--text-primary);
 }
+
+.app-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  color: var(--text-secondary, #888);
+  font-size: 1rem;
+  background: var(--bg-primary, #1a1a2e);
+}

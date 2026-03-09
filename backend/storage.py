@@ -1,222 +1,96 @@
-"""JSON-based storage for conversations."""
+"""Firestore-based storage for conversations.
 
-import json
-import os
+Each user's conversations are stored at: users/{user_id}/conversations/{conversation_id}
+"""
+
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-from pathlib import Path
-from .config import DATA_DIR
+
+from google.cloud import firestore as gc_firestore
+
+from .firebase_config import get_db
 
 
-INDEX_FILE_NAME = "conversations_index.json"
+def _conv_ref(user_id: str, conversation_id: str):
+    """Get document reference for a specific conversation."""
+    return (
+        get_db()
+        .collection("users")
+        .document(user_id)
+        .collection("conversations")
+        .document(conversation_id)
+    )
 
 
-def ensure_data_dir():
-    """Ensure the data directory exists."""
-    Path(DATA_DIR).mkdir(parents=True, exist_ok=True)
+def _conv_collection(user_id: str):
+    """Get collection reference for a user's conversations."""
+    return (
+        get_db()
+        .collection("users")
+        .document(user_id)
+        .collection("conversations")
+    )
 
 
-def get_conversation_path(conversation_id: str) -> str:
-    """Get the file path for a conversation."""
-    return os.path.join(DATA_DIR, f"{conversation_id}.json")
-
-
-def get_index_path() -> str:
-    """Get the file path for the conversation index."""
-    return os.path.join(DATA_DIR, INDEX_FILE_NAME)
-
-
-def _load_index() -> Optional[List[Dict[str, Any]]]:
-    """Load the conversation index file."""
-    path = get_index_path()
-    if not os.path.exists(path):
-        return None
-    try:
-        with open(path, 'r') as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return None
-
-
-def _save_index(index: List[Dict[str, Any]]):
-    """Save the conversation index file."""
-    ensure_data_dir()
-    path = get_index_path()
-    with open(path, 'w') as f:
-        json.dump(index, f, indent=2)
-
-
-def rebuild_index() -> List[Dict[str, Any]]:
-    """
-    Rebuild the conversation index from actual conversation files.
-    Use this fallback if index is missing or corrupted.
-    """
-    ensure_data_dir()
-    index = []
-    
-    for filename in os.listdir(DATA_DIR):
-        if filename.endswith('.json') and filename != INDEX_FILE_NAME:
-            path = os.path.join(DATA_DIR, filename)
-            try:
-                with open(path, 'r') as f:
-                    data = json.load(f)
-                    index.append({
-                        "id": data["id"],
-                        "created_at": data["created_at"],
-                        "title": data.get("title", "New Conversation"),
-                        "message_count": len(data["messages"])
-                    })
-            except (json.JSONDecodeError, OSError):
-                continue
-
-    # Sort by creation time, newest first
-    index.sort(key=lambda x: x["created_at"], reverse=True)
-    _save_index(index)
-    return index
-
-
-def _update_index_entry(conversation: Dict[str, Any]):
-    """Update or add a single entry in the index."""
-    index = _load_index()
-    if index is None:
-        index = rebuild_index()
-        return  # rebuild already includes the current state if file was saved
-
-    # Create metadata entry
-    entry = {
-        "id": conversation["id"],
-        "created_at": conversation["created_at"],
-        "title": conversation.get("title", "New Conversation"),
-        "message_count": len(conversation["messages"])
-    }
-
-    # Remove existing entry if present
-    index = [item for item in index if item["id"] != conversation["id"]]
-    
-    # Add new entry
-    index.append(entry)
-    
-    # Sort and save
-    index.sort(key=lambda x: x["created_at"], reverse=True)
-    _save_index(index)
-
-
-def _remove_from_index(conversation_id: str):
-    """Remove an entry from the index."""
-    index = _load_index()
-    if index is None:
-        return  # No index to remove from
-
-    # Filter out the deleted conversation
-    new_index = [item for item in index if item["id"] != conversation_id]
-    
-    if len(new_index) != len(index):
-        _save_index(new_index)
-
-
-def create_conversation(conversation_id: str) -> Dict[str, Any]:
-    """
-    Create a new conversation.
-
-    Args:
-        conversation_id: Unique identifier for the conversation
-
-    Returns:
-        New conversation dict
-    """
-    ensure_data_dir()
-
+def create_conversation(user_id: str, conversation_id: str) -> Dict[str, Any]:
+    """Create a new conversation."""
     conversation = {
         "id": conversation_id,
         "created_at": datetime.utcnow().isoformat(),
         "title": "New Conversation",
-        "messages": []
+        "messages": [],
+        "message_count": 0,
     }
-
-    # Save to file
-    path = get_conversation_path(conversation_id)
-    with open(path, 'w') as f:
-        json.dump(conversation, f, indent=2)
-
-    # Update index
-    _update_index_entry(conversation)
-
+    _conv_ref(user_id, conversation_id).set(conversation)
     return conversation
 
 
-def get_conversation(conversation_id: str) -> Optional[Dict[str, Any]]:
-    """
-    Load a conversation from storage.
-
-    Args:
-        conversation_id: Unique identifier for the conversation
-
-    Returns:
-        Conversation dict or None if not found
-    """
-    path = get_conversation_path(conversation_id)
-
-    if not os.path.exists(path):
+def get_conversation(user_id: str, conversation_id: str) -> Optional[Dict[str, Any]]:
+    """Load a conversation from Firestore."""
+    doc = _conv_ref(user_id, conversation_id).get()
+    if not doc.exists:
         return None
-
-    with open(path, 'r') as f:
-        return json.load(f)
+    return doc.to_dict()
 
 
-def save_conversation(conversation: Dict[str, Any]):
-    """
-    Save a conversation to storage.
-
-    Args:
-        conversation: Conversation dict to save
-    """
-    ensure_data_dir()
-
-    path = get_conversation_path(conversation['id'])
-    with open(path, 'w') as f:
-        json.dump(conversation, f, indent=2)
-
-    # Update index
-    _update_index_entry(conversation)
+def save_conversation(user_id: str, conversation: Dict[str, Any]):
+    """Save a conversation to Firestore, updating message_count."""
+    conversation["message_count"] = len(conversation.get("messages", []))
+    _conv_ref(user_id, conversation["id"]).set(conversation)
 
 
-def list_conversations() -> List[Dict[str, Any]]:
-    """
-    List all conversations (metadata only).
-    Uses cached index file for O(1) performance.
+def list_conversations(user_id: str) -> List[Dict[str, Any]]:
+    """List all conversations (metadata only), sorted newest first."""
+    docs = (
+        _conv_collection(user_id)
+        .select(["id", "created_at", "title", "message_count"])
+        .order_by("created_at", direction=gc_firestore.Query.DESCENDING)
+        .stream()
+    )
+    return [
+        {
+            "id": d.get("id") or doc.id,
+            "created_at": d.get("created_at", ""),
+            "title": d.get("title", "New Conversation"),
+            "message_count": d.get("message_count", 0),
+        }
+        for doc in docs
+        for d in [doc.to_dict()]
+    ]
 
-    Returns:
-        List of conversation metadata dicts
-    """
-    ensure_data_dir()
 
-    # Try to load from index first
-    index = _load_index()
-    
-    # If index missing or invalid, rebuild it
-    if index is None:
-        return rebuild_index()
-        
-    return index
-
-
-def add_user_message(conversation_id: str, content: str, file_metadatas: Optional[List[Dict[str, Any]]] = None):
-    """
-    Add a user message to a conversation.
-
-    Args:
-        conversation_id: Conversation identifier
-        content: User message content
-        file_metadatas: Optional list of attached file metadata dicts
-    """
-    conversation = get_conversation(conversation_id)
+def add_user_message(
+    user_id: str,
+    conversation_id: str,
+    content: str,
+    file_metadatas: Optional[List[Dict[str, Any]]] = None,
+):
+    """Add a user message to a conversation."""
+    conversation = get_conversation(user_id, conversation_id)
     if conversation is None:
         raise ValueError(f"Conversation {conversation_id} not found")
 
-    msg: Dict[str, Any] = {
-        "role": "user",
-        "content": content,
-    }
+    msg: Dict[str, Any] = {"role": "user", "content": content}
     if file_metadatas:
         msg["files"] = [
             {
@@ -231,60 +105,37 @@ def add_user_message(conversation_id: str, content: str, file_metadatas: Optiona
         ]
 
     conversation["messages"].append(msg)
-    save_conversation(conversation)
+    save_conversation(user_id, conversation)
 
 
 def add_assistant_message(
+    user_id: str,
     conversation_id: str,
     stage1: List[Dict[str, Any]],
     stage2: Optional[List[Dict[str, Any]]] = None,
-    stage3: Optional[Dict[str,Any]] = None,
-    metadata: Optional[Dict[str, Any]] = None
+    stage3: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ):
-    """
-    Add an assistant message to a conversation.
-    
-    Supports partial execution modes where stage2 and/or stage3 may be None.
-    
-    Args:
-        conversation_id: Conversation identifier
-        stage1: List of individual model responses (always present)
-        stage2: List of model rankings (None if execution_mode was 'chat_only')
-        stage3: Final synthesized response (None if execution_mode was not 'full')
-        metadata: Optional metadata including execution_mode, label_to_model, etc.
-    """
-    conversation = get_conversation(conversation_id)
+    """Add an assistant (council) message to a conversation."""
+    conversation = get_conversation(user_id, conversation_id)
     if conversation is None:
         raise ValueError(f"Conversation {conversation_id} not found")
 
-    message = {
-        "role": "assistant",
-        "stage1": stage1,
-    }
-    
-    # Only include stage2 and stage3 if they were executed
+    message: Dict[str, Any] = {"role": "assistant", "stage1": stage1}
     if stage2 is not None:
         message["stage2"] = stage2
     if stage3 is not None:
         message["stage3"] = stage3
-
     if metadata:
         message["metadata"] = metadata
 
     conversation["messages"].append(message)
+    save_conversation(user_id, conversation)
 
-    save_conversation(conversation)
 
-
-def add_error_message(conversation_id: str, error_text: str):
-    """
-    Add an error message to a conversation to record a failed turn.
-
-    Args:
-        conversation_id: Conversation identifier
-        error_text: The error description
-    """
-    conversation = get_conversation(conversation_id)
+def add_error_message(user_id: str, conversation_id: str, error_text: str):
+    """Record a failed turn in the conversation."""
+    conversation = get_conversation(user_id, conversation_id)
     if conversation is None:
         raise ValueError(f"Conversation {conversation_id} not found")
 
@@ -294,99 +145,80 @@ def add_error_message(conversation_id: str, error_text: str):
         "error": error_text,
         "stage1": [],
         "stage2": [],
-        "stage3": None
+        "stage3": None,
     }
-
     conversation["messages"].append(message)
-    save_conversation(conversation)
+    save_conversation(user_id, conversation)
 
 
 def add_chat_message(
+    user_id: str,
     conversation_id: str,
     chat_response: Dict[str, Any],
     metadata: Optional[Dict[str, Any]] = None,
 ):
-    """Save a single-model chat response to the conversation."""
-    conversation = get_conversation(conversation_id)
+    """Save a single-model chat response."""
+    conversation = get_conversation(user_id, conversation_id)
     if conversation is None:
         raise ValueError(f"Conversation {conversation_id} not found")
 
-    message = {
+    message: Dict[str, Any] = {
         "role": "assistant",
         "mode": "chat",
         "chat_response": chat_response,
     }
-
     if metadata:
         message["metadata"] = metadata
 
     conversation["messages"].append(message)
-    save_conversation(conversation)
+    save_conversation(user_id, conversation)
 
 
 def add_debate_message(
+    user_id: str,
     conversation_id: str,
     debate_entries: List[Dict[str, Any]],
     summary: Optional[Dict[str, Any]] = None,
     metadata: Optional[Dict[str, Any]] = None,
 ):
-    """
-    Add a debate result message to a conversation.
-
-    Args:
-        conversation_id: Conversation identifier
-        debate_entries: List of debate turns and interjections
-        summary: Chairman summary response
-        metadata: Optional metadata (search context, etc.)
-    """
-    conversation = get_conversation(conversation_id)
+    """Save a debate result message."""
+    conversation = get_conversation(user_id, conversation_id)
     if conversation is None:
         raise ValueError(f"Conversation {conversation_id} not found")
 
-    message = {
+    message: Dict[str, Any] = {
         "role": "assistant",
         "mode": "debate",
         "debate_entries": debate_entries,
         "summary": summary,
     }
-
     if metadata:
         message["metadata"] = metadata
 
     conversation["messages"].append(message)
-    save_conversation(conversation)
+    save_conversation(user_id, conversation)
 
 
-def update_conversation_title(conversation_id: str, title: str):
-    """
-    Update the title of a conversation.
-
-    Args:
-        conversation_id: Conversation identifier
-        title: New title for the conversation
-    """
-    conversation = get_conversation(conversation_id)
-    if conversation is None:
-        raise ValueError(f"Conversation {conversation_id} not found")
-
-    conversation["title"] = title
-    save_conversation(conversation)
+def update_conversation_title(user_id: str, conversation_id: str, title: str):
+    """Update the title of a conversation."""
+    _conv_ref(user_id, conversation_id).update({"title": title})
 
 
-def get_conversation_debate_config(conversation_id: str) -> Optional[Dict[str, Any]]:
-    """Return the per-conversation debate_config, or None if not set."""
-    conversation = get_conversation(conversation_id)
+def get_conversation_debate_config(
+    user_id: str, conversation_id: str
+) -> Optional[Dict[str, Any]]:
+    """Return the per-conversation debate_config, or None."""
+    conversation = get_conversation(user_id, conversation_id)
     if conversation is None:
         return None
     return conversation.get("debate_config")
 
 
-def update_conversation_debate_config(conversation_id: str, config: Optional[Dict[str, Any]]):
-    """Set or clear the per-conversation debate_config.
-
-    Pass None to remove the override (revert to stage/global defaults).
-    """
-    conversation = get_conversation(conversation_id)
+def update_conversation_debate_config(
+    user_id: str, conversation_id: str, config: Optional[Dict[str, Any]]
+):
+    """Set or clear the per-conversation debate_config."""
+    conversation = get_conversation(user_id, conversation_id)
     if conversation is None:
         raise ValueError(f"Conversation {conversation_id} not found")
 
@@ -394,27 +226,14 @@ def update_conversation_debate_config(conversation_id: str, config: Optional[Dic
         conversation.pop("debate_config", None)
     else:
         conversation["debate_config"] = config
-    save_conversation(conversation)
+    save_conversation(user_id, conversation)
 
 
-def delete_conversation(conversation_id: str) -> bool:
-    """
-    Delete a conversation.
-
-    Args:
-        conversation_id: Conversation identifier
-
-    Returns:
-        True if deleted, False if not found
-    """
-    path = get_conversation_path(conversation_id)
-
-    if not os.path.exists(path):
+def delete_conversation(user_id: str, conversation_id: str) -> bool:
+    """Delete a conversation. Returns True if it existed."""
+    ref = _conv_ref(user_id, conversation_id)
+    doc = ref.get()
+    if not doc.exists:
         return False
-
-    os.remove(path)
-    
-    # Update index
-    _remove_from_index(conversation_id)
-    
+    ref.delete()
     return True
