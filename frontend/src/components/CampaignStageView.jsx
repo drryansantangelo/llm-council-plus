@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '../api';
+import StageExpertConfig from './StageExpertConfig';
 import './CampaignStageView.css';
 
 function formatSize(bytes) {
@@ -20,6 +21,12 @@ function formatDate(iso) {
   if (diffDays < 7) return `${diffDays}d ago`;
 
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function formatAbsoluteDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 const EllipsisIcon = () => (
@@ -45,7 +52,13 @@ export default function CampaignStageView({
   const [loadingSources, setLoadingSources] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
+  const [showTextModal, setShowTextModal] = useState(false);
+  const [textSourceName, setTextSourceName] = useState('');
+  const [textSourceContent, setTextSourceContent] = useState('');
+  const [savingText, setSavingText] = useState(false);
   const fileInputRef = useRef(null);
+  const textAreaRef = useRef(null);
 
   const [chatMenu, setChatMenu] = useState(null);
   const [renamingChatId, setRenamingChatId] = useState(null);
@@ -53,6 +66,20 @@ export default function CampaignStageView({
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const chatMenuRef = useRef(null);
   const renameInputRef = useRef(null);
+
+  const [sourceMenu, setSourceMenu] = useState(null);
+  const [renamingSourceId, setRenamingSourceId] = useState(null);
+  const [sourceRenameValue, setSourceRenameValue] = useState('');
+  const [confirmDeleteSourceId, setConfirmDeleteSourceId] = useState(null);
+  const sourceMenuRef = useRef(null);
+  const sourceRenameInputRef = useRef(null);
+
+  // Expert config state
+  const [stageDebateConfig, setStageDebateConfig] = useState(null);
+  const [loadingExpertConfig, setLoadingExpertConfig] = useState(false);
+  const [savingExpertConfig, setSavingExpertConfig] = useState(false);
+  const [chatDebateConfigs, setChatDebateConfigs] = useState({});
+  const [configuringChatId, setConfiguringChatId] = useState(null);
 
   const stageConversations = React.useMemo(() => {
     if (!stage) return [];
@@ -78,6 +105,100 @@ export default function CampaignStageView({
   useEffect(() => {
     loadSources();
   }, [loadSources]);
+
+  // ── Expert Config ──────────────────────────────────────────────────
+
+  const loadStageExpertConfig = useCallback(async () => {
+    if (!campaign?.id || !stage?.id) return;
+    setLoadingExpertConfig(true);
+    try {
+      const data = await api.getStageDebateConfig(campaign.id, stage.id);
+      setStageDebateConfig(data.debate_config || null);
+    } catch (err) {
+      console.error('Failed to load stage debate config:', err);
+    } finally {
+      setLoadingExpertConfig(false);
+    }
+  }, [campaign?.id, stage?.id]);
+
+  const loadChatDebateConfigs = useCallback(async () => {
+    if (!stage) return;
+    const convIds = stage.conversation_ids || [];
+    const configs = {};
+    await Promise.all(
+      convIds.map(async (convId) => {
+        try {
+          const data = await api.getConversationDebateConfig(convId);
+          if (data.debate_config) {
+            configs[convId] = data.debate_config;
+          }
+        } catch {
+          // ignore
+        }
+      })
+    );
+    setChatDebateConfigs(configs);
+  }, [stage]);
+
+  useEffect(() => {
+    loadStageExpertConfig();
+    loadChatDebateConfigs();
+  }, [loadStageExpertConfig, loadChatDebateConfigs]);
+
+  const handleSaveStageConfig = async (models, roles) => {
+    if (!campaign?.id || !stage?.id) return;
+    setSavingExpertConfig(true);
+    try {
+      await api.updateStageDebateConfig(campaign.id, stage.id, models, roles);
+      setStageDebateConfig({ debate_models: models, debate_roles: roles });
+    } catch (err) {
+      console.error('Failed to save stage debate config:', err);
+    } finally {
+      setSavingExpertConfig(false);
+    }
+  };
+
+  const handleClearStageConfig = async () => {
+    if (!campaign?.id || !stage?.id) return;
+    setSavingExpertConfig(true);
+    try {
+      await api.clearStageDebateConfig(campaign.id, stage.id);
+      setStageDebateConfig(null);
+    } catch (err) {
+      console.error('Failed to clear stage debate config:', err);
+    } finally {
+      setSavingExpertConfig(false);
+    }
+  };
+
+  const handleSaveChatConfig = async (convId, models, roles) => {
+    setSavingExpertConfig(true);
+    try {
+      await api.updateConversationDebateConfig(convId, models, roles);
+      setChatDebateConfigs(prev => ({ ...prev, [convId]: { debate_models: models, debate_roles: roles } }));
+    } catch (err) {
+      console.error('Failed to save chat debate config:', err);
+    } finally {
+      setSavingExpertConfig(false);
+    }
+  };
+
+  const handleClearChatConfig = async (convId) => {
+    setSavingExpertConfig(true);
+    try {
+      await api.clearConversationDebateConfig(convId);
+      setChatDebateConfigs(prev => {
+        const next = { ...prev };
+        delete next[convId];
+        return next;
+      });
+      setConfiguringChatId(null);
+    } catch (err) {
+      console.error('Failed to clear chat debate config:', err);
+    } finally {
+      setSavingExpertConfig(false);
+    }
+  };
 
   // ── Chat context menu ─────────────────────────────────────────────
 
@@ -116,6 +237,8 @@ export default function CampaignStageView({
       setRenamingChatId(convId);
     } else if (action === 'delete') {
       setConfirmDeleteId(convId);
+    } else if (action === 'configure_experts') {
+      setConfiguringChatId(convId === configuringChatId ? null : convId);
     }
   };
 
@@ -151,18 +274,106 @@ export default function CampaignStageView({
     }
   };
 
+  // ── Source context menu ──────────────────────────────────────────
+
+  useEffect(() => {
+    if (!sourceMenu) return;
+    const handleClick = (e) => {
+      if (sourceMenuRef.current && !sourceMenuRef.current.contains(e.target)) {
+        setSourceMenu(null);
+      }
+    };
+    const handleKey = (e) => {
+      if (e.key === 'Escape') setSourceMenu(null);
+    };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handleClick);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [sourceMenu]);
+
+  const openSourceMenu = (e, sourceId) => {
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    setSourceMenu({ id: sourceId, x: rect.left, y: rect.bottom + 4 });
+  };
+
+  const handleSourceMenuAction = (action) => {
+    if (!sourceMenu) return;
+    const srcId = sourceMenu.id;
+    setSourceMenu(null);
+
+    if (action === 'rename') {
+      const src = sources.find(s => s.id === srcId);
+      setSourceRenameValue(src?.original_name || '');
+      setRenamingSourceId(srcId);
+    } else if (action === 'delete') {
+      setConfirmDeleteSourceId(srcId);
+    }
+  };
+
+  useEffect(() => {
+    if (renamingSourceId && sourceRenameInputRef.current) {
+      sourceRenameInputRef.current.focus();
+      sourceRenameInputRef.current.select();
+    }
+  }, [renamingSourceId]);
+
+  const commitSourceRename = async () => {
+    if (renamingSourceId && sourceRenameValue.trim() && campaign?.id) {
+      try {
+        await api.renameCampaignSource(campaign.id, renamingSourceId, sourceRenameValue.trim());
+        setSources(prev => prev.map(s =>
+          s.id === renamingSourceId ? { ...s, original_name: sourceRenameValue.trim() } : s
+        ));
+      } catch (err) {
+        console.error('Failed to rename source:', err);
+      }
+    }
+    setRenamingSourceId(null);
+  };
+
+  const cancelSourceRename = () => setRenamingSourceId(null);
+
+  const handleSourceRenameKeyDown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commitSourceRename(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancelSourceRename(); }
+  };
+
+  const confirmDeleteSource = () => {
+    if (confirmDeleteSourceId) {
+      handleDeleteSource(confirmDeleteSourceId);
+      setConfirmDeleteSourceId(null);
+    }
+  };
+
   // ── Sources ───────────────────────────────────────────────────────
 
   const handleUpload = async (files) => {
-    if (!files?.length || !campaign?.id) return;
+    if (!files?.length) return;
+    if (!campaign?.id) {
+      setUploadError('No campaign selected. Please select a campaign first.');
+      return;
+    }
     setUploading(true);
+    setUploadError(null);
+    const failed = [];
     try {
       for (const file of files) {
-        await api.uploadCampaignSource(campaign.id, file);
+        try {
+          await api.uploadCampaignSource(campaign.id, file);
+        } catch (err) {
+          failed.push(`${file.name}: ${err.message}`);
+        }
       }
       await loadSources();
+      if (failed.length) {
+        setUploadError(`Failed to upload:\n${failed.join('\n')}`);
+      }
     } catch (err) {
-      console.error('Upload failed:', err);
+      setUploadError(`Upload failed: ${err.message}`);
     } finally {
       setUploading(false);
     }
@@ -194,6 +405,28 @@ export default function CampaignStageView({
   const handleDragLeave = (e) => {
     e.preventDefault();
     setDragActive(false);
+  };
+
+  const openTextModal = () => {
+    setTextSourceName('');
+    setTextSourceContent('');
+    setShowTextModal(true);
+    setTimeout(() => textAreaRef.current?.focus(), 50);
+  };
+
+  const handleSaveTextSource = async () => {
+    if (!textSourceContent.trim() || !campaign?.id) return;
+    setSavingText(true);
+    setUploadError(null);
+    try {
+      await api.createTextSource(campaign.id, textSourceName, textSourceContent);
+      await loadSources();
+      setShowTextModal(false);
+    } catch (err) {
+      setUploadError(`Failed to save text: ${err.message}`);
+    } finally {
+      setSavingText(false);
+    }
   };
 
   if (!campaign || !stage) return null;
@@ -231,6 +464,13 @@ export default function CampaignStageView({
           Sources
           {sources.length > 0 && <span className="stage-view-tab-count">{sources.length}</span>}
         </button>
+        <button
+          className={`stage-view-tab ${activeTab === 'experts' ? 'active' : ''}`}
+          onClick={() => setActiveTab('experts')}
+        >
+          Experts
+          {stageDebateConfig && <span className="stage-view-tab-count">&#x2713;</span>}
+        </button>
       </div>
 
       <div className="stage-view-content">
@@ -245,8 +485,8 @@ export default function CampaignStageView({
               </div>
             ) : (
               stageConversations.map(conv => (
+                <React.Fragment key={conv.id}>
                 <div
-                  key={conv.id}
                   className="stage-view-chat-item"
                   onClick={() => {
                     if (renamingChatId !== conv.id && confirmDeleteId !== conv.id) {
@@ -268,6 +508,9 @@ export default function CampaignStageView({
                     ) : (
                       <div className="stage-view-chat-title">
                         {conv.title || 'New Conversation'}
+                        {chatDebateConfigs[conv.id] && (
+                          <span className="expert-config-chat-badge">Custom Experts</span>
+                        )}
                       </div>
                     )}
                     {conv.last_message && renamingChatId !== conv.id && (
@@ -298,7 +541,46 @@ export default function CampaignStageView({
                     </>
                   )}
                 </div>
+                {configuringChatId === conv.id && (
+                  <div className="stage-view-chat-expert-panel" onClick={(e) => e.stopPropagation()}>
+                    <div className="stage-view-chat-expert-panel-header">
+                      <span>Configure Experts for: {conv.title || 'New Conversation'}</span>
+                      <button
+                        className="expert-config-remove"
+                        onClick={() => setConfiguringChatId(null)}
+                      >&times;</button>
+                    </div>
+                    <StageExpertConfig
+                      debateModels={chatDebateConfigs[conv.id]?.debate_models || stageDebateConfig?.debate_models || ['', '']}
+                      debateRoles={chatDebateConfigs[conv.id]?.debate_roles || stageDebateConfig?.debate_roles || ['', '']}
+                      onSave={(models, roles) => handleSaveChatConfig(conv.id, models, roles)}
+                      onClear={() => handleClearChatConfig(conv.id)}
+                      configSource={chatDebateConfigs[conv.id] ? 'chat' : 'global'}
+                      isSaving={savingExpertConfig}
+                    />
+                  </div>
+                )}
+                </React.Fragment>
               ))
+            )}
+          </div>
+        )}
+
+        {activeTab === 'experts' && (
+          <div className="stage-view-experts">
+            {loadingExpertConfig ? (
+              <div className="stage-view-empty">
+                <div className="stage-view-empty-text">Loading expert config...</div>
+              </div>
+            ) : (
+              <StageExpertConfig
+                debateModels={stageDebateConfig?.debate_models || ['', '']}
+                debateRoles={stageDebateConfig?.debate_roles || ['', '']}
+                onSave={handleSaveStageConfig}
+                onClear={handleClearStageConfig}
+                configSource={stageDebateConfig ? 'stage' : 'global'}
+                isSaving={savingExpertConfig}
+              />
             )}
           </div>
         )}
@@ -315,19 +597,27 @@ export default function CampaignStageView({
                 Sources are shared across all chats in this campaign. Upload documents to provide
                 persistent context for every conversation.
               </p>
-              <button
-                className="stage-view-upload-btn"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-              >
-                {uploading ? 'Uploading...' : '+ Add source'}
-              </button>
+              <div className="stage-view-source-actions">
+                <button
+                  className="stage-view-upload-btn"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                >
+                  {uploading ? 'Uploading...' : '+ Add file'}
+                </button>
+                <button
+                  className="stage-view-upload-btn stage-view-add-text-btn"
+                  onClick={openTextModal}
+                >
+                  + Add text
+                </button>
+              </div>
               <input
                 ref={fileInputRef}
                 type="file"
                 className="stage-view-file-input"
                 multiple
-                accept=".pdf,.docx,.doc,.png,.jpg,.jpeg,.gif,.webp"
+                accept=".pdf,.docx,.doc,.txt,.html,.htm,.md,.csv,.png,.jpg,.jpeg,.gif,.webp"
                 onChange={(e) => {
                   if (e.target.files?.length) {
                     handleUpload(Array.from(e.target.files));
@@ -336,6 +626,12 @@ export default function CampaignStageView({
                 }}
               />
             </div>
+
+            {uploadError && (
+              <div className="stage-view-upload-error" onClick={() => setUploadError(null)}>
+                {uploadError}
+              </div>
+            )}
 
             {loadingSources ? (
               <div className="stage-view-empty">
@@ -354,19 +650,41 @@ export default function CampaignStageView({
                 {sources.map(source => (
                   <div key={source.id} className="stage-view-source-item">
                     <div className="stage-view-source-info">
-                      <div className="stage-view-source-name">{source.original_name}</div>
-                      <div className="stage-view-source-meta">
+                      {renamingSourceId === source.id ? (
+                        <input
+                          ref={sourceRenameInputRef}
+                          className="stage-view-rename-input"
+                          value={sourceRenameValue}
+                          onChange={(e) => setSourceRenameValue(e.target.value)}
+                          onKeyDown={handleSourceRenameKeyDown}
+                          onBlur={commitSourceRename}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      ) : (
+                        <div className="stage-view-source-name">{source.original_name}</div>
+                      )}
+                      {renamingSourceId !== source.id && (
+                        <div className="stage-view-source-meta">
                         {formatSize(source.size)}
-                        {source.uploaded_at && ` · ${formatDate(source.uploaded_at)}`}
-                      </div>
+                        {source.uploaded_at && ` · ${formatAbsoluteDate(source.uploaded_at)}`}
+                        </div>
+                      )}
                     </div>
-                    <button
-                      className="stage-view-source-delete"
-                      onClick={() => handleDeleteSource(source.id)}
-                      title="Remove source"
-                    >
-                      ×
-                    </button>
+                    {confirmDeleteSourceId === source.id ? (
+                      <div className="stage-view-delete-confirm" onClick={(e) => e.stopPropagation()}>
+                        <span className="stage-view-delete-label">Delete?</span>
+                        <button className="stage-view-confirm-yes" onClick={confirmDeleteSource}>Yes</button>
+                        <button className="stage-view-confirm-no" onClick={() => setConfirmDeleteSourceId(null)}>No</button>
+                      </div>
+                    ) : (
+                      <button
+                        className="stage-view-source-menu-btn"
+                        onClick={(e) => openSourceMenu(e, source.id)}
+                        title="More actions"
+                      >
+                        <EllipsisIcon />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -381,6 +699,73 @@ export default function CampaignStageView({
         )}
       </div>
 
+      {/* Text source modal */}
+      {showTextModal && (
+        <div className="stage-view-text-modal-overlay" onClick={() => setShowTextModal(false)}>
+          <div className="stage-view-text-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="stage-view-text-modal-header">
+              <h3>Add Text Source</h3>
+              <button className="stage-view-text-modal-close" onClick={() => setShowTextModal(false)}>
+                &times;
+              </button>
+            </div>
+            <input
+              className="stage-view-text-modal-name"
+              type="text"
+              placeholder="Source name (e.g. Competitor Homepage Copy)"
+              value={textSourceName}
+              onChange={(e) => setTextSourceName(e.target.value)}
+            />
+            <textarea
+              ref={textAreaRef}
+              className="stage-view-text-modal-content"
+              placeholder="Paste or type your text here..."
+              value={textSourceContent}
+              onChange={(e) => setTextSourceContent(e.target.value)}
+            />
+            <div className="stage-view-text-modal-footer">
+              <span className="stage-view-text-modal-hint">
+                {textSourceContent.length > 0
+                  ? `${textSourceContent.length.toLocaleString()} characters`
+                  : 'Text will be saved as a source available to all chats'}
+              </span>
+              <div className="stage-view-text-modal-buttons">
+                <button
+                  className="stage-view-text-modal-cancel"
+                  onClick={() => setShowTextModal(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="stage-view-text-modal-save"
+                  onClick={handleSaveTextSource}
+                  disabled={savingText || !textSourceContent.trim()}
+                >
+                  {savingText ? 'Saving...' : 'Save Source'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Source context menu */}
+      {sourceMenu && (
+        <div
+          ref={sourceMenuRef}
+          className="context-menu"
+          style={{ left: sourceMenu.x, top: sourceMenu.y }}
+        >
+          <button className="context-menu-item" onClick={() => handleSourceMenuAction('rename')}>
+            Rename
+          </button>
+          <div className="context-menu-divider" />
+          <button className="context-menu-item danger" onClick={() => handleSourceMenuAction('delete')}>
+            Delete
+          </button>
+        </div>
+      )}
+
       {/* Chat context menu */}
       {chatMenu && (
         <div
@@ -390,6 +775,9 @@ export default function CampaignStageView({
         >
           <button className="context-menu-item" onClick={() => handleChatMenuAction('rename')}>
             Rename
+          </button>
+          <button className="context-menu-item" onClick={() => handleChatMenuAction('configure_experts')}>
+            Configure Experts
           </button>
           <div className="context-menu-divider" />
           <button className="context-menu-item danger" onClick={() => handleChatMenuAction('delete')}>

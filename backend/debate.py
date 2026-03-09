@@ -10,6 +10,8 @@ from .settings import get_settings
 from .config import get_chairman_model
 from .prompts import STAGE1_SEARCH_CONTEXT_TEMPLATE
 from .uploads import build_multimodal_content
+from . import campaigns
+from . import storage as _storage
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,27 @@ def _build_debate_history_text(debate_history: List[Dict]) -> str:
     return "\n\n---\n\n".join(parts)
 
 
+def resolve_debate_config(conversation_id: str) -> Optional[Dict[str, Any]]:
+    """Resolve debate_config following the chain: conversation -> stage -> global.
+
+    Returns a dict with ``debate_models`` and ``debate_roles`` keys, or None
+    to indicate the caller should fall back to global settings.
+    """
+    conv = _storage.get_conversation(conversation_id)
+    if conv and conv.get("debate_config"):
+        return conv["debate_config"]
+
+    lookup = campaigns.lookup_campaign_for_conversation(conversation_id)
+    if lookup:
+        stage_cfg = campaigns.get_stage_debate_config(
+            lookup["campaign_id"], lookup["stage_id"]
+        )
+        if stage_cfg:
+            return stage_cfg
+
+    return None
+
+
 async def run_debate(
     conversation_id: str,
     user_query: str,
@@ -62,8 +85,9 @@ async def run_debate(
         active_models = [force_chat_model]
         active_roles = ["You are a helpful expert."]
     else:
-        models = settings.debate_models or []
-        roles = settings.debate_roles or []
+        override = resolve_debate_config(conversation_id)
+        models = (override or {}).get("debate_models") or settings.debate_models or []
+        roles = (override or {}).get("debate_roles") or settings.debate_roles or []
         active_models = []
         active_roles = []
         for i, model in enumerate(models):

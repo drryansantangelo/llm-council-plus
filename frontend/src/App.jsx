@@ -247,6 +247,7 @@ function App() {
     try {
       const campaign = await api.createCampaign(name);
       setCampaigns(prev => [campaign, ...prev]);
+      setManagingCampaignId(campaign.id);
     } catch (error) {
       console.error('Failed to create campaign:', error);
     }

@@ -639,6 +639,25 @@ async def add_stage_conversation(campaign_id: str, stage_id: str):
 # ── Campaign Sources ──────────────────────────────────────────────────
 
 
+class TextSourceBody(BaseModel):
+    name: str
+    content: str
+
+
+@app.post("/api/campaigns/{campaign_id}/sources/text")
+async def create_text_source(campaign_id: str, body: TextSourceBody):
+    """Create a source from pasted text."""
+    try:
+        meta = campaigns.add_text_source(campaign_id, body.name, body.content)
+        if meta is None:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        return meta
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create text source: {str(e)}")
+
+
 @app.post("/api/campaigns/{campaign_id}/sources")
 async def upload_campaign_source(campaign_id: str, file: UploadFile = File(...)):
     """Upload a source file to a campaign."""
@@ -662,6 +681,21 @@ async def list_campaign_sources(campaign_id: str):
     return sources
 
 
+class RenameSourceBody(BaseModel):
+    name: str
+
+
+@app.patch("/api/campaigns/{campaign_id}/sources/{source_id}")
+async def rename_campaign_source(campaign_id: str, source_id: str, body: RenameSourceBody):
+    """Rename a campaign source."""
+    if not body.name.strip():
+        raise HTTPException(status_code=400, detail="Name cannot be empty")
+    result = campaigns.rename_source(campaign_id, source_id, body.name)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Source not found")
+    return result
+
+
 @app.delete("/api/campaigns/{campaign_id}/sources/{source_id}")
 async def delete_campaign_source(campaign_id: str, source_id: str):
     """Delete a source file from a campaign."""
@@ -678,6 +712,78 @@ async def serve_campaign_source(campaign_id: str, source_id: str):
     if filepath is None:
         raise HTTPException(status_code=404, detail="Source not found")
     return FileResponse(filepath)
+
+
+# ── Debate Config (per-stage / per-chat) ──────────────────────────────
+
+
+class DebateConfigBody(BaseModel):
+    debate_models: List[str]
+    debate_roles: List[str]
+
+
+@app.get("/api/campaigns/{campaign_id}/stages/{stage_id}/debate-config")
+async def get_stage_debate_config(campaign_id: str, stage_id: str):
+    """Get the stage-level expert/debate config override."""
+    campaign = campaigns.get_campaign(campaign_id)
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    cfg = campaigns.get_stage_debate_config(campaign_id, stage_id)
+    return {"debate_config": cfg}
+
+
+@app.put("/api/campaigns/{campaign_id}/stages/{stage_id}/debate-config")
+async def set_stage_debate_config(campaign_id: str, stage_id: str, body: DebateConfigBody):
+    """Set stage-level expert/debate config override."""
+    result = campaigns.update_stage(
+        campaign_id, stage_id,
+        {"debate_config": {"debate_models": body.debate_models, "debate_roles": body.debate_roles}},
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Campaign or stage not found")
+    return {"status": "updated", "debate_config": result.get("debate_config")}
+
+
+@app.delete("/api/campaigns/{campaign_id}/stages/{stage_id}/debate-config")
+async def clear_stage_debate_config(campaign_id: str, stage_id: str):
+    """Remove stage-level expert config (revert to global defaults)."""
+    result = campaigns.update_stage(campaign_id, stage_id, {"debate_config": None})
+    if result is None:
+        raise HTTPException(status_code=404, detail="Campaign or stage not found")
+    return {"status": "cleared"}
+
+
+@app.get("/api/conversations/{conversation_id}/debate-config")
+async def get_conversation_debate_config(conversation_id: str):
+    """Get the per-chat expert/debate config override."""
+    conversation = storage.get_conversation(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    cfg = storage.get_conversation_debate_config(conversation_id)
+    return {"debate_config": cfg}
+
+
+@app.put("/api/conversations/{conversation_id}/debate-config")
+async def set_conversation_debate_config(conversation_id: str, body: DebateConfigBody):
+    """Set per-chat expert/debate config override."""
+    try:
+        storage.update_conversation_debate_config(
+            conversation_id,
+            {"debate_models": body.debate_models, "debate_roles": body.debate_roles},
+        )
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"status": "updated", "debate_config": {"debate_models": body.debate_models, "debate_roles": body.debate_roles}}
+
+
+@app.delete("/api/conversations/{conversation_id}/debate-config")
+async def clear_conversation_debate_config(conversation_id: str):
+    """Remove per-chat expert config (revert to stage/global defaults)."""
+    try:
+        storage.update_conversation_debate_config(conversation_id, None)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {"status": "cleared"}
 
 
 @app.post("/api/conversations/{conversation_id}/upload")

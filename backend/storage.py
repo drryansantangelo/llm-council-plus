@@ -373,6 +373,30 @@ def update_conversation_title(conversation_id: str, title: str):
     save_conversation(conversation)
 
 
+def get_conversation_debate_config(conversation_id: str) -> Optional[Dict[str, Any]]:
+    """Return the per-conversation debate_config, or None if not set."""
+    conversation = get_conversation(conversation_id)
+    if conversation is None:
+        return None
+    return conversation.get("debate_config")
+
+
+def update_conversation_debate_config(conversation_id: str, config: Optional[Dict[str, Any]]):
+    """Set or clear the per-conversation debate_config.
+
+    Pass None to remove the override (revert to stage/global defaults).
+    """
+    conversation = get_conversation(conversation_id)
+    if conversation is None:
+        raise ValueError(f"Conversation {conversation_id} not found")
+
+    if config is None:
+        conversation.pop("debate_config", None)
+    else:
+        conversation["debate_config"] = config
+    save_conversation(conversation)
+
+
 def delete_conversation(conversation_id: str) -> bool:
     """
     Delete a conversation.

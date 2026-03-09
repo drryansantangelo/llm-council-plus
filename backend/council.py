@@ -395,7 +395,7 @@ async def stage3_synthesize_final(
     if is_default_prompt:
         # If using default, split into System (Persona) and User (Data) for better adherence at low temp
         messages = [
-            {"role": "system", "content": "You are the Chairman of an LLM Council. Your task is to synthesize the provided model responses into a single, comprehensive answer."},
+            {"role": "system", "content": "You are the Chairman of an LLM Council. Your task is to produce the definitive strategic audit — what's working and why, plus prioritized changes with the strategic reasoning behind each."},
             {"role": "user", "content": chairman_prompt}
         ]
     else:

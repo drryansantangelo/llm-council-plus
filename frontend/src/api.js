@@ -583,9 +583,35 @@ export const api = {
     return response.json();
   },
 
+  async createTextSource(campaignId, name, content) {
+    const response = await fetch(`${API_BASE}/api/campaigns/${campaignId}/sources/text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, content }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to create text source');
+    }
+    return response.json();
+  },
+
   async listCampaignSources(campaignId) {
     const response = await fetch(`${API_BASE}/api/campaigns/${campaignId}/sources`);
     if (!response.ok) throw new Error('Failed to list sources');
+    return response.json();
+  },
+
+  async renameCampaignSource(campaignId, sourceId, name) {
+    const response = await fetch(`${API_BASE}/api/campaigns/${campaignId}/sources/${sourceId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to rename source');
+    }
     return response.json();
   },
 
@@ -599,5 +625,55 @@ export const api = {
 
   getCampaignSourceUrl(campaignId, sourceId) {
     return `${API_BASE}/api/campaigns/${campaignId}/sources/${sourceId}/file`;
+  },
+
+  // ── Debate Config (per-stage / per-chat) ──────────────────────────────
+
+  async getStageDebateConfig(campaignId, stageId) {
+    const response = await fetch(`${API_BASE}/api/campaigns/${campaignId}/stages/${stageId}/debate-config`);
+    if (!response.ok) throw new Error('Failed to get stage debate config');
+    return response.json();
+  },
+
+  async updateStageDebateConfig(campaignId, stageId, debateModels, debateRoles) {
+    const response = await fetch(`${API_BASE}/api/campaigns/${campaignId}/stages/${stageId}/debate-config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ debate_models: debateModels, debate_roles: debateRoles }),
+    });
+    if (!response.ok) throw new Error('Failed to update stage debate config');
+    return response.json();
+  },
+
+  async clearStageDebateConfig(campaignId, stageId) {
+    const response = await fetch(`${API_BASE}/api/campaigns/${campaignId}/stages/${stageId}/debate-config`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) throw new Error('Failed to clear stage debate config');
+    return response.json();
+  },
+
+  async getConversationDebateConfig(conversationId) {
+    const response = await fetch(`${API_BASE}/api/conversations/${conversationId}/debate-config`);
+    if (!response.ok) throw new Error('Failed to get conversation debate config');
+    return response.json();
+  },
+
+  async updateConversationDebateConfig(conversationId, debateModels, debateRoles) {
+    const response = await fetch(`${API_BASE}/api/conversations/${conversationId}/debate-config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ debate_models: debateModels, debate_roles: debateRoles }),
+    });
+    if (!response.ok) throw new Error('Failed to update conversation debate config');
+    return response.json();
+  },
+
+  async clearConversationDebateConfig(conversationId) {
+    const response = await fetch(`${API_BASE}/api/conversations/${conversationId}/debate-config`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) throw new Error('Failed to clear conversation debate config');
+    return response.json();
   },
 };

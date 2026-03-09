@@ -184,21 +184,17 @@ def delete_campaign(campaign_id: str) -> bool:
 
 
 def add_stage(campaign_id: str, name: str) -> Optional[Dict[str, Any]]:
-    """Add a new stage to a campaign. Creates an initial linked conversation."""
+    """Add a new stage to a campaign."""
     campaign = get_campaign(campaign_id)
     if campaign is None:
         return None
-
-    conv_id = str(uuid.uuid4())
-    storage.create_conversation(conv_id)
-    storage.update_conversation_title(conv_id, "New Conversation")
 
     position = len(campaign["stages"])
     stage = {
         "id": uuid.uuid4().hex[:8],
         "name": name,
         "position": position,
-        "conversation_ids": [conv_id],
+        "conversation_ids": [],
         "summary": None,
         "status": "active",
         "created_at": datetime.utcnow().isoformat(),
@@ -206,7 +202,6 @@ def add_stage(campaign_id: str, name: str) -> Optional[Dict[str, Any]]:
 
     campaign["stages"].append(stage)
     _save_campaign(campaign)
-    _add_to_reverse_index(conv_id, campaign_id, stage["id"])
     return stage
 
 
@@ -278,6 +273,11 @@ def update_stage(
                 stage["status"] = updates["status"]
             if "summary" in updates:
                 stage["summary"] = updates["summary"]
+            if "debate_config" in updates:
+                if updates["debate_config"] is None:
+                    stage.pop("debate_config", None)
+                else:
+                    stage["debate_config"] = updates["debate_config"]
             _save_campaign(campaign)
             return stage
     return None
@@ -324,6 +324,17 @@ def delete_stage(campaign_id: str, stage_id: str) -> bool:
         s["position"] = i
     _save_campaign(campaign)
     return True
+
+
+def get_stage_debate_config(campaign_id: str, stage_id: str) -> Optional[Dict[str, Any]]:
+    """Return the stage-level debate_config, or None if not set."""
+    campaign = get_campaign(campaign_id)
+    if campaign is None:
+        return None
+    for stage in campaign.get("stages", []):
+        if stage["id"] == stage_id:
+            return stage.get("debate_config")
+    return None
 
 
 def get_stage_context(campaign_id: str, stage_id: str) -> str:
@@ -434,12 +445,63 @@ async def add_source(campaign_id: str, file) -> Optional[Dict[str, Any]]:
     return meta
 
 
+def add_text_source(campaign_id: str, name: str, content: str) -> Optional[Dict[str, Any]]:
+    """Create a source from raw text. Saves as a .txt file. Returns metadata or None."""
+    campaign = get_campaign(campaign_id)
+    if campaign is None:
+        return None
+
+    if not content.strip():
+        raise ValueError("Text content cannot be empty")
+
+    source_id = uuid.uuid4().hex[:12]
+    safe_name = f"{source_id}.txt"
+
+    directory = _ensure_sources_dir(campaign_id)
+    filepath = directory / safe_name
+    filepath.write_text(content, encoding="utf-8")
+
+    original_name = (name.strip() or "Text Source") + ".txt"
+
+    meta = {
+        "id": source_id,
+        "filename": safe_name,
+        "original_name": original_name,
+        "category": "document",
+        "mime_type": "text/plain",
+        "size": len(content.encode("utf-8")),
+        "uploaded_at": datetime.utcnow().isoformat(),
+    }
+
+    sources = campaign.get("sources", [])
+    sources.append(meta)
+    campaign["sources"] = sources
+    _save_campaign(campaign)
+
+    meta["extracted_text"] = content
+    return meta
+
+
 def list_sources(campaign_id: str) -> Optional[List[Dict[str, Any]]]:
     """List all sources for a campaign. Returns None if campaign not found."""
     campaign = get_campaign(campaign_id)
     if campaign is None:
         return None
     return campaign.get("sources", [])
+
+
+def rename_source(campaign_id: str, source_id: str, new_name: str) -> Optional[Dict[str, Any]]:
+    """Rename a source's original_name. Returns updated metadata or None."""
+    campaign = get_campaign(campaign_id)
+    if campaign is None:
+        return None
+
+    for s in campaign.get("sources", []):
+        if s["id"] == source_id:
+            s["original_name"] = new_name.strip()
+            _save_campaign(campaign)
+            return s
+    return None
 
 
 def delete_source(campaign_id: str, source_id: str) -> bool:

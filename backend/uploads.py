@@ -11,7 +11,8 @@ UPLOADS_DIR = Path("data/uploads")
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".doc"}
-ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS
+TEXT_EXTENSIONS = {".txt", ".html", ".htm", ".md", ".csv"}
+ALLOWED_EXTENSIONS = IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS | TEXT_EXTENSIONS
 
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
 MAX_FILES_PER_MESSAGE = 5
@@ -25,6 +26,11 @@ MIME_MAP = {
     ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".doc": "application/msword",
+    ".txt": "text/plain",
+    ".html": "text/html",
+    ".htm": "text/html",
+    ".md": "text/markdown",
+    ".csv": "text/csv",
 }
 
 
@@ -66,7 +72,10 @@ async def save_upload(conversation_id: str, file) -> Dict[str, Any]:
     filepath = directory / safe_name
     filepath.write_bytes(content)
 
-    category = "image" if ext in IMAGE_EXTENSIONS else "document"
+    if ext in IMAGE_EXTENSIONS:
+        category = "image"
+    else:
+        category = "document"
     extracted_text = None
     if category == "document":
         extracted_text = extract_document_text(str(filepath))
@@ -84,13 +93,17 @@ async def save_upload(conversation_id: str, file) -> Dict[str, Any]:
 
 
 def extract_document_text(filepath: str) -> Optional[str]:
-    """Extract text content from PDF or Word documents."""
+    """Extract text content from PDF, Word, or plain text documents."""
     ext = Path(filepath).suffix.lower()
 
     if ext == ".pdf":
         return _extract_pdf_text(filepath)
     elif ext in (".docx", ".doc"):
         return _extract_docx_text(filepath)
+    elif ext in (".txt", ".md", ".csv"):
+        return _extract_plain_text(filepath)
+    elif ext in (".html", ".htm"):
+        return _extract_html_text(filepath)
 
     return None
 
@@ -126,6 +139,38 @@ def _extract_docx_text(filepath: str) -> str:
         return text
     except Exception as e:
         return f"[Could not extract document text: {e}]"
+
+
+def _extract_plain_text(filepath: str) -> str:
+    """Read a plain text, markdown, or CSV file."""
+    try:
+        text = Path(filepath).read_text(encoding="utf-8", errors="replace")
+        if not text.strip():
+            return "[File contained no text]"
+        return text
+    except Exception as e:
+        return f"[Could not read text file: {e}]"
+
+
+def _extract_html_text(filepath: str) -> str:
+    """Extract text from HTML, preserving structure as readable text."""
+    import re
+    try:
+        raw = Path(filepath).read_text(encoding="utf-8", errors="replace")
+        if not raw.strip():
+            return "[HTML file was empty]"
+        text = re.sub(r'<script[^>]*>.*?</script>', '', raw, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+        text = re.sub(r'</(p|div|h[1-6]|li|tr|section|article|header|footer)>', '\n', text, flags=re.IGNORECASE)
+        text = re.sub(r'<[^>]+>', '', text)
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = text.strip()
+        if not text:
+            return "[HTML file contained no extractable text]"
+        return text
+    except Exception as e:
+        return f"[Could not extract HTML text: {e}]"
 
 
 def get_image_base64(filepath: str) -> str:
