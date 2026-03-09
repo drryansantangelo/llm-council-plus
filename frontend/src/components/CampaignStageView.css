@@ -609,6 +609,37 @@
   cursor: not-allowed;
 }
 
+/* ── Screenshot Button & Modal ─────────────────────────────────────── */
+
+.stage-view-screenshot-btn {
+  background: rgba(168, 85, 247, 0.12);
+  border-color: rgba(168, 85, 247, 0.25);
+  color: #c084fc;
+}
+
+.stage-view-screenshot-btn:hover:not(:disabled) {
+  background: rgba(168, 85, 247, 0.2);
+  border-color: rgba(168, 85, 247, 0.4);
+}
+
+.stage-view-screenshot-modal {
+  max-width: 700px;
+}
+
+.stage-view-screenshot-preview {
+  margin: 16px 20px 0;
+  border-radius: 8px;
+  overflow: auto;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  max-height: 50vh;
+}
+
+.stage-view-screenshot-preview img {
+  max-width: 100%;
+  display: block;
+}
+
 /* ── Drop Overlay ──────────────────────────────────────────────────── */
 
 .stage-view-drop-overlay {

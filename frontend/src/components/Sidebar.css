@@ -71,6 +71,15 @@
   align-items: center;
   gap: 10px;
   min-width: 0;
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 4px 6px;
+  margin: -4px -6px;
+  transition: background 0.15s;
+}
+
+.sidebar-brand:hover {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .sidebar-logo {
@@ -114,6 +123,29 @@
 .icon-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* ── New Debate Link ───────────────────────────────────────────────── */
+
+.sidebar-new-debate {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 20px;
+  background: none;
+  border: none;
+  color: var(--accent-primary);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--font-ui);
+  cursor: pointer;
+  transition: background 0.15s;
+  border-radius: 0;
+}
+
+.sidebar-new-debate:hover {
+  background: rgba(255, 255, 255, 0.04);
 }
 
 /* ── Search ────────────────────────────────────────────────────────── */

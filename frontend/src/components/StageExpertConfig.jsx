@@ -68,6 +68,7 @@ export default function StageExpertConfig({
   onClear,
   configSource,
   isSaving,
+  inheritedFrom,
 }) {
   const [models, setModels] = useState(initialModels || ['', '']);
   const [roles, setRoles] = useState(initialRoles || ['', '']);
@@ -170,11 +171,15 @@ export default function StageExpertConfig({
       <div className="expert-config-header">
         <div className="expert-config-header-text">
           <p className="expert-config-description">
-            {configSource === 'global'
-              ? 'No custom experts configured. Using global defaults from Settings.'
-              : configSource === 'stage'
-                ? 'Custom experts configured for this stage. All chats in this stage will use these experts unless individually overridden.'
-                : 'Custom experts configured for this chat, overriding the stage default.'
+            {configSource === 'global' && inheritedFrom
+              ? inheritedFrom.source === 'stage'
+                ? `Inherited from previous stage: ${inheritedFrom.sourceName}. Save to customize for this stage.`
+                : 'Pre-filled from global defaults in Settings. Save to customize for this stage.'
+              : configSource === 'global'
+                ? 'No custom experts configured. Using global defaults from Settings.'
+                : configSource === 'stage'
+                  ? 'Custom experts configured for this stage. All chats in this stage will use these experts unless individually overridden.'
+                  : 'Custom experts configured for this chat, overriding the stage default.'
             }
           </p>
         </div>

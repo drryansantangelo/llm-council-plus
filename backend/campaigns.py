@@ -144,6 +144,7 @@ def list_campaigns() -> List[Dict[str, Any]]:
                             "position": s["position"],
                             "status": s.get("status", "active"),
                             "conversation_ids": s.get("conversation_ids", []),
+                            "debate_config": s.get("debate_config"),
                         }
                         for s in data.get("stages", [])
                     ],

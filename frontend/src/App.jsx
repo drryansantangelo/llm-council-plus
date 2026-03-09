@@ -679,6 +679,13 @@ function App() {
         onDuplicateStage={handleDuplicateStage}
         onRenameConversation={handleRenameConversation}
         onDuplicateConversation={handleDuplicateConversation}
+        onGoHome={() => {
+          setCurrentCampaignId(null);
+          setCurrentStageId(null);
+          setShowStageOverview(false);
+          handleNewConversation();
+          setSidebarOpen(false);
+        }}
       />
 
       <div className="main-content">

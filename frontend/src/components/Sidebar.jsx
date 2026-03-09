@@ -41,6 +41,7 @@ export default function Sidebar({
   onDuplicateStage,
   onRenameConversation,
   onDuplicateConversation,
+  onGoHome,
 }) {
   const [confirmingDelete, setConfirmingDelete] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -288,7 +289,7 @@ export default function Sidebar({
 
         <div className="sidebar-fixed-top">
           <div className="sidebar-header">
-            <div className="sidebar-brand">
+            <div className="sidebar-brand" onClick={onGoHome} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') onGoHome?.(); }}>
               <img src="/dm-logo-white.svg" alt="Dynamic Media" className="sidebar-logo" />
               <span className="sidebar-app-name">DM Debate <span className="sidebar-app-accent">Studio</span></span>
             </div>
@@ -296,6 +297,11 @@ export default function Sidebar({
               ⚙️
             </button>
           </div>
+
+          <button className="sidebar-new-debate" onClick={onNewConversation}>
+            <PlusIcon />
+            <span>New Debate</span>
+          </button>
 
           <div className="sidebar-search">
             <input

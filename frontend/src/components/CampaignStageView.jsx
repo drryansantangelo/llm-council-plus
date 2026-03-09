@@ -57,8 +57,13 @@ export default function CampaignStageView({
   const [textSourceName, setTextSourceName] = useState('');
   const [textSourceContent, setTextSourceContent] = useState('');
   const [savingText, setSavingText] = useState(false);
+  const [showScreenshotModal, setShowScreenshotModal] = useState(false);
+  const [screenshotPreview, setScreenshotPreview] = useState(null);
+  const [screenshotName, setScreenshotName] = useState('');
+  const [savingScreenshot, setSavingScreenshot] = useState(false);
   const fileInputRef = useRef(null);
   const textAreaRef = useRef(null);
+  const screenshotNameRef = useRef(null);
 
   const [chatMenu, setChatMenu] = useState(null);
   const [renamingChatId, setRenamingChatId] = useState(null);
@@ -80,6 +85,7 @@ export default function CampaignStageView({
   const [savingExpertConfig, setSavingExpertConfig] = useState(false);
   const [chatDebateConfigs, setChatDebateConfigs] = useState({});
   const [configuringChatId, setConfiguringChatId] = useState(null);
+  const [globalDefaults, setGlobalDefaults] = useState(null);
 
   const stageConversations = React.useMemo(() => {
     if (!stage) return [];
@@ -144,6 +150,54 @@ export default function CampaignStageView({
     loadStageExpertConfig();
     loadChatDebateConfigs();
   }, [loadStageExpertConfig, loadChatDebateConfigs]);
+
+  useEffect(() => {
+    api.getSettings().then(settings => {
+      if (settings.debate_models || settings.debate_roles) {
+        setGlobalDefaults({
+          debate_models: settings.debate_models || ['', ''],
+          debate_roles: settings.debate_roles || ['', ''],
+        });
+      }
+    }).catch(() => {});
+  }, []);
+
+  const inheritedConfig = React.useMemo(() => {
+    if (stageDebateConfig) return null;
+
+    const stages = campaign?.stages || [];
+    const currentPos = stage?.position;
+    if (currentPos == null) return null;
+
+    const preceding = stages
+      .filter(s => s.position < currentPos && s.debate_config)
+      .sort((a, b) => b.position - a.position);
+
+    if (preceding.length > 0) {
+      const prev = preceding[0];
+      return {
+        debate_models: prev.debate_config.debate_models,
+        debate_roles: prev.debate_config.debate_roles,
+        source: 'stage',
+        sourceName: prev.name,
+      };
+    }
+
+    if (globalDefaults) {
+      const hasModels = globalDefaults.debate_models?.some(m => m);
+      const hasRoles = globalDefaults.debate_roles?.some(r => r);
+      if (hasModels || hasRoles) {
+        return {
+          debate_models: globalDefaults.debate_models,
+          debate_roles: globalDefaults.debate_roles,
+          source: 'global',
+          sourceName: null,
+        };
+      }
+    }
+
+    return null;
+  }, [stageDebateConfig, campaign?.stages, stage?.position, globalDefaults]);
 
   const handleSaveStageConfig = async (models, roles) => {
     if (!campaign?.id || !stage?.id) return;
@@ -429,6 +483,85 @@ export default function CampaignStageView({
     }
   };
 
+  const loadImageDimensions = useCallback((url, blob, type) => {
+    const img = new Image();
+    img.onload = () => {
+      setScreenshotPreview({ blob, url, type, width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.src = url;
+    setScreenshotPreview({ blob, url, type, width: null, height: null });
+    setScreenshotName('');
+    setShowScreenshotModal(true);
+    setTimeout(() => screenshotNameRef.current?.focus(), 50);
+  }, []);
+
+  const handlePasteScreenshot = useCallback(async (e) => {
+    if (activeTab !== 'sources') return;
+    const items = e?.clipboardData?.items;
+    if (!items) return;
+
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const blob = item.getAsFile();
+        if (!blob) continue;
+        const url = URL.createObjectURL(blob);
+        loadImageDimensions(url, blob, blob.type);
+        return;
+      }
+    }
+  }, [activeTab, loadImageDimensions]);
+
+  useEffect(() => {
+    document.addEventListener('paste', handlePasteScreenshot);
+    return () => document.removeEventListener('paste', handlePasteScreenshot);
+  }, [handlePasteScreenshot]);
+
+  const handlePasteFromClipboard = async () => {
+    try {
+      const clipboardItems = await navigator.clipboard.read();
+      for (const item of clipboardItems) {
+        const imageType = item.types.find(t => t.startsWith('image/'));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          const url = URL.createObjectURL(blob);
+          loadImageDimensions(url, blob, imageType);
+          return;
+        }
+      }
+      setUploadError('No image found in clipboard. Copy a screenshot first (e.g. Win+Shift+S).');
+    } catch (err) {
+      setUploadError('Could not read clipboard. Try pasting with Ctrl+V instead.');
+    }
+  };
+
+  const handleSaveScreenshot = async () => {
+    if (!screenshotPreview || !campaign?.id) return;
+    setSavingScreenshot(true);
+    setUploadError(null);
+    try {
+      const ext = screenshotPreview.type === 'image/jpeg' ? '.jpg' : '.png';
+      const name = (screenshotName.trim() || 'Screenshot') + ext;
+      const file = new File([screenshotPreview.blob], name, { type: screenshotPreview.type });
+      await api.uploadCampaignSource(campaign.id, file);
+      await loadSources();
+      closeScreenshotModal();
+    } catch (err) {
+      setUploadError(`Failed to save screenshot: ${err.message}`);
+    } finally {
+      setSavingScreenshot(false);
+    }
+  };
+
+  const closeScreenshotModal = () => {
+    if (screenshotPreview?.url) {
+      URL.revokeObjectURL(screenshotPreview.url);
+    }
+    setShowScreenshotModal(false);
+    setScreenshotPreview(null);
+    setScreenshotName('');
+  };
+
   if (!campaign || !stage) return null;
 
   return (
@@ -551,8 +684,8 @@ export default function CampaignStageView({
                       >&times;</button>
                     </div>
                     <StageExpertConfig
-                      debateModels={chatDebateConfigs[conv.id]?.debate_models || stageDebateConfig?.debate_models || ['', '']}
-                      debateRoles={chatDebateConfigs[conv.id]?.debate_roles || stageDebateConfig?.debate_roles || ['', '']}
+                      debateModels={chatDebateConfigs[conv.id]?.debate_models || stageDebateConfig?.debate_models || inheritedConfig?.debate_models || ['', '']}
+                      debateRoles={chatDebateConfigs[conv.id]?.debate_roles || stageDebateConfig?.debate_roles || inheritedConfig?.debate_roles || ['', '']}
                       onSave={(models, roles) => handleSaveChatConfig(conv.id, models, roles)}
                       onClear={() => handleClearChatConfig(conv.id)}
                       configSource={chatDebateConfigs[conv.id] ? 'chat' : 'global'}
@@ -574,12 +707,13 @@ export default function CampaignStageView({
               </div>
             ) : (
               <StageExpertConfig
-                debateModels={stageDebateConfig?.debate_models || ['', '']}
-                debateRoles={stageDebateConfig?.debate_roles || ['', '']}
+                debateModels={stageDebateConfig?.debate_models || inheritedConfig?.debate_models || ['', '']}
+                debateRoles={stageDebateConfig?.debate_roles || inheritedConfig?.debate_roles || ['', '']}
                 onSave={handleSaveStageConfig}
                 onClear={handleClearStageConfig}
                 configSource={stageDebateConfig ? 'stage' : 'global'}
                 isSaving={savingExpertConfig}
+                inheritedFrom={!stageDebateConfig && inheritedConfig ? inheritedConfig : null}
               />
             )}
           </div>
@@ -610,6 +744,13 @@ export default function CampaignStageView({
                   onClick={openTextModal}
                 >
                   + Add text
+                </button>
+                <button
+                  className="stage-view-upload-btn stage-view-screenshot-btn"
+                  onClick={handlePasteFromClipboard}
+                  title="Paste a screenshot from your clipboard (or press Ctrl+V)"
+                >
+                  + Screenshot
                 </button>
               </div>
               <input
@@ -742,6 +883,55 @@ export default function CampaignStageView({
                   disabled={savingText || !textSourceContent.trim()}
                 >
                   {savingText ? 'Saving...' : 'Save Source'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Screenshot preview modal */}
+      {showScreenshotModal && screenshotPreview && (
+        <div className="stage-view-text-modal-overlay" onClick={closeScreenshotModal}>
+          <div className="stage-view-text-modal stage-view-screenshot-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="stage-view-text-modal-header">
+              <h3>Add Screenshot</h3>
+              <button className="stage-view-text-modal-close" onClick={closeScreenshotModal}>
+                &times;
+              </button>
+            </div>
+            <div className="stage-view-screenshot-preview">
+              <img src={screenshotPreview.url} alt="Screenshot preview" />
+            </div>
+            <input
+              ref={screenshotNameRef}
+              className="stage-view-text-modal-name"
+              type="text"
+              placeholder="Screenshot name (e.g. Landing Page Hero)"
+              value={screenshotName}
+              onChange={(e) => setScreenshotName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); handleSaveScreenshot(); }
+                if (e.key === 'Escape') { e.preventDefault(); closeScreenshotModal(); }
+              }}
+            />
+            <div className="stage-view-text-modal-footer">
+              <span className="stage-view-text-modal-hint">
+                Full image captured{screenshotPreview.width ? ` · ${screenshotPreview.width}×${screenshotPreview.height}px` : ''}{screenshotPreview.blob ? ` · ${formatSize(screenshotPreview.blob.size)}` : ''}
+              </span>
+              <div className="stage-view-text-modal-buttons">
+                <button
+                  className="stage-view-text-modal-cancel"
+                  onClick={closeScreenshotModal}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="stage-view-text-modal-save"
+                  onClick={handleSaveScreenshot}
+                  disabled={savingScreenshot}
+                >
+                  {savingScreenshot ? 'Saving...' : 'Save Screenshot'}
                 </button>
               </div>
             </div>
