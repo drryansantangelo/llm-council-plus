@@ -37,6 +37,9 @@ DESIGN_SESSION_CONTEXT.md
 # Auto Claude data directory
 .auto-claude/
 
+# Firebase
+.firebase/
+
 # Auto Claude generated files
 .auto-claude-security.json
 .auto-claude-status

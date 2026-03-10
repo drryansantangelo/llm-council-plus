@@ -1,0 +1,14 @@
+.venv/
+.env
+frontend/
+data/
+node_modules/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+serviceAccountKey.json
+*.md
+migrate_to_firestore.py
+.firebaserc
+firebase.json
