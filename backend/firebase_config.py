@@ -15,8 +15,7 @@ def init_firebase():
     Looks for credentials in this order:
     1. FIREBASE_SERVICE_ACCOUNT_KEY env var (path to JSON key file)
     2. FIREBASE_SERVICE_ACCOUNT_JSON env var (inline JSON string)
-    3. GOOGLE_APPLICATION_CREDENTIALS env var (GCP default)
-    4. Application Default Credentials
+    3. Application Default Credentials (Cloud Run, GCE, etc.)
     """
     global _app, _db
 
@@ -25,6 +24,9 @@ def init_firebase():
 
     key_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_KEY")
     key_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+    project_id = os.getenv("GOOGLE_CLOUD_PROJECT", os.getenv("GCP_PROJECT", "dm-debate-studio"))
+
+    options = {"projectId": project_id}
 
     if key_path and os.path.exists(key_path):
         cred = credentials.Certificate(key_path)
@@ -33,7 +35,7 @@ def init_firebase():
     else:
         cred = credentials.ApplicationDefault()
 
-    _app = firebase_admin.initialize_app(cred)
+    _app = firebase_admin.initialize_app(cred, options)
     _db = firestore.client()
 
 
